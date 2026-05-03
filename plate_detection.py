@@ -413,10 +413,6 @@ class YoloPlateDetector:
         detected_sections: dict[str, PlateCandidate] = {}
         for section_id, (score, absolute_box) in best_per_section.items():
             x1, y1, x2, y2 = absolute_box
-            crop = frame[y1:y2, x1:x2].copy()
-            if crop.size == 0:
-                continue
-
             spec = section_lookup[section_id]
             sx1, sy1, sx2, sy2 = spec.box
             clamped_box = (
@@ -426,6 +422,10 @@ class YoloPlateDetector:
                 min(y2, sy2),
             )
             if clamped_box[2] <= clamped_box[0] or clamped_box[3] <= clamped_box[1]:
+                continue
+            cx1, cy1, cx2, cy2 = clamped_box
+            crop = frame[cy1:cy2, cx1:cx2].copy()
+            if crop.size == 0:
                 continue
             relative_box = (
                 clamped_box[0] - sx1,

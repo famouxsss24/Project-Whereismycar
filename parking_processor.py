@@ -14,14 +14,16 @@ class ParkingLotProcessor:
         self,
         section_count: int = 3,
         layout: str = "columns",
+        section_boxes: list[tuple[int, int, int, int]] | None = None,
         detector_name: str = "heuristic",
         yolo_model_path: str | None = None,
         yolo_confidence: float = 0.25,
         yolo_image_size: int = 640,
         allow_yolo_fallback: bool = True,
     ) -> None:
-        self.section_count = section_count
-        self.layout = layout
+        self._custom_section_boxes = tuple(section_boxes or [])
+        self.section_count = len(self._custom_section_boxes) if self._custom_section_boxes else section_count
+        self.layout = "custom" if self._custom_section_boxes else layout
         self.reader = PlateReader()
         self.detector = create_plate_detector(
             detector_name=detector_name,
@@ -30,16 +32,36 @@ class ParkingLotProcessor:
             yolo_image_size=yolo_image_size,
         )
         self.fallback_detector = HeuristicPlateDetector() if detector_name == "yolo" and allow_yolo_fallback else None
-        self._section_cache: dict[tuple[tuple[int, ...], int, str], list[SectionSpec]] = {}
+        self._section_cache: dict[tuple[tuple[int, ...], int, str, tuple[tuple[int, int, int, int], ...]], list[SectionSpec]] = {}
 
     @property
     def detector_name(self) -> str:
         return self.detector.name
 
+    def _build_custom_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
+        height, width = image_shape[:2]
+        specs: list[SectionSpec] = []
+        for index, box in enumerate(self._custom_section_boxes):
+            x1, y1, x2, y2 = box
+            if x1 < 0 or y1 < 0:
+                raise ValueError(f"Section box #{index + 1} has negative coordinates: {(x1, y1, x2, y2)}")
+            if x2 <= x1 or y2 <= y1:
+                raise ValueError(f"Section box #{index + 1} has invalid size: {(x1, y1, x2, y2)}")
+            if x2 > width or y2 > height:
+                raise ValueError(
+                    f"Section box #{index + 1} is out of frame bounds "
+                    f"{(width, height)}: {(x1, y1, x2, y2)}"
+                )
+            specs.append(SectionSpec(f"section-{index + 1}", index, box))
+        return specs
+
     def get_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
-        cache_key = (image_shape, self.section_count, self.layout)
+        cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes)
         if cache_key not in self._section_cache:
-            self._section_cache[cache_key] = divide_into_sections(image_shape, self.section_count, self.layout)
+            if self._custom_section_boxes:
+                self._section_cache[cache_key] = self._build_custom_section_specs(image_shape)
+            else:
+                self._section_cache[cache_key] = divide_into_sections(image_shape, self.section_count, self.layout)
         return self._section_cache[cache_key]
 
     def _read_plate_candidate(self, candidate_image: np.ndarray):
@@ -49,6 +71,9 @@ class ParkingLotProcessor:
 
         enhanced = self.reader.read_plate_from_image(enhance_plate_image(candidate_image))
         if primary.plate is not None and is_valid_korean_plate(primary.plate):
+            enhanced_is_valid = enhanced.plate is not None and is_valid_korean_plate(enhanced.plate)
+            if not enhanced_is_valid:
+                return primary
             return primary if primary.confidence >= enhanced.confidence else enhanced
         if enhanced.plate is not None and is_valid_korean_plate(enhanced.plate):
             return enhanced
