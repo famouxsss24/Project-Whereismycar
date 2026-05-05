@@ -1,0 +1,38 @@
+{
+  "image_path": "test1.jpg",
+  "webcam": false,
+  "camera": 0,
+  "sections": 3,
+  "section_boxes": [
+    {
+      "x": 20,
+      "y": 120,
+      "width": 180,
+      "height": 180
+    },
+    {
+      "x": 220,
+      "y": 120,
+      "width": 180,
+      "height": 180
+    },
+    {
+      "x": 420,
+      "y": 120,
+      "width": 180,
+      "height": 180
+    }
+  ],
+  "detector": "yolo",
+  "yolo_only": false,
+  "yolo_model": "models/license-plate-finetune-v1m.pt",
+  "yolo_conf": 0.25,
+  "yolo_imgsz": 640,
+  "layout": "columns",
+  "server_url": null,
+  "timeout": 10.0,
+  "interval": 1.0,
+  "loop": false,
+  "preview": false,
+  "pretty": true
+}
