@@ -14,9 +14,9 @@ import numpy as np
 from parking_processor import ParkingLotProcessor
 from plate_publish import (
     FirebasePlatePublisher,
+    LocalImageWebPublisher,
     PlateUpdateDispatcher,
     normalize_firebase_database_url,
-    normalize_firebase_storage_bucket,
     resolve_project_id_from_service_account,
 )
 from parking_types import ProcessedFrameResult
@@ -205,12 +205,20 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         )
     if "firebase_database_url" in raw_settings:
         defaults["firebase_database_url"] = _as_optional_str(raw_settings["firebase_database_url"], "firebase_database_url")
-    if "firebase_storage_bucket" in raw_settings:
-        defaults["firebase_storage_bucket"] = _as_optional_str(
-            raw_settings["firebase_storage_bucket"], "firebase_storage_bucket"
-        )
     if "firebase_root_path" in raw_settings:
         defaults["firebase_root_path"] = _as_optional_str(raw_settings["firebase_root_path"], "firebase_root_path")
+    if "local_image_dir" in raw_settings:
+        defaults["local_image_dir"] = _as_optional_str(raw_settings["local_image_dir"], "local_image_dir")
+    if "local_image_base_url" in raw_settings:
+        defaults["local_image_base_url"] = _as_optional_str(raw_settings["local_image_base_url"], "local_image_base_url")
+    if "serve_local_images" in raw_settings:
+        defaults["serve_local_images"] = _as_bool(raw_settings["serve_local_images"], "serve_local_images")
+    if "local_image_server_host" in raw_settings:
+        defaults["local_image_server_host"] = _as_optional_str(
+            raw_settings["local_image_server_host"], "local_image_server_host"
+        )
+    if "local_image_server_port" in raw_settings:
+        defaults["local_image_server_port"] = _as_int(raw_settings["local_image_server_port"], "local_image_server_port")
     if "timeout" in raw_settings:
         defaults["timeout"] = _as_float(raw_settings["timeout"], "timeout")
     if "interval" in raw_settings:
@@ -290,20 +298,42 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
     parser.add_argument("--server-url", help="Optional server URL to receive the JSON via POST.")
     parser.add_argument(
         "--firebase-service-account",
-        help="Path to Firebase service account JSON. Enables Firebase DB + Storage upload.",
+        help="Path to Firebase service account JSON. Enables Firebase Realtime DB updates.",
     )
     parser.add_argument(
         "--firebase-database-url",
         help="Firebase Realtime Database URL. If omitted, inferred from project_id.",
     )
     parser.add_argument(
-        "--firebase-storage-bucket",
-        help="Firebase Storage bucket name. If omitted, inferred from project_id.",
-    )
-    parser.add_argument(
         "--firebase-root-path",
         default="parking_lot",
         help="Realtime DB root path for plate records. Default: parking_lot.",
+    )
+    parser.add_argument(
+        "--local-image-dir",
+        default="plate_images",
+        help="Directory to save cropped plate images for local hosting. Default: plate_images.",
+    )
+    parser.add_argument(
+        "--local-image-base-url",
+        help="External base URL for local images. If omitted, built-in static server URL is used.",
+    )
+    parser.add_argument(
+        "--serve-local-images",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run built-in static server for local plate images. Default: enabled.",
+    )
+    parser.add_argument(
+        "--local-image-server-host",
+        default="127.0.0.1",
+        help="Host for built-in local image server. Default: 127.0.0.1.",
+    )
+    parser.add_argument(
+        "--local-image-server-port",
+        type=int,
+        default=8787,
+        help="Port for built-in local image server. Default: 8787.",
     )
     parser.add_argument("--timeout", type=float, default=10.0, help="POST timeout in seconds. Default: 10.")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between webcam OCR runs. Default: 1.")
@@ -326,19 +356,27 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
     if args.firebase_service_account:
         project_id = resolve_project_id_from_service_account(args.firebase_service_account)
         firebase_database_url = normalize_firebase_database_url(project_id, args.firebase_database_url)
-        firebase_storage_bucket = normalize_firebase_storage_bucket(project_id, args.firebase_storage_bucket)
         firebase_publisher = FirebasePlatePublisher(
             service_account_path=args.firebase_service_account,
             database_url=firebase_database_url,
-            storage_bucket=firebase_storage_bucket,
             root_path=args.firebase_root_path or "parking_lot",
         )
+
+    local_image_base_url = args.local_image_base_url or os.environ.get("LOCAL_IMAGE_BASE_URL")
+    local_image_publisher = LocalImageWebPublisher(
+        image_dir=args.local_image_dir or "plate_images",
+        base_url=local_image_base_url,
+        serve=args.serve_local_images,
+        host=args.local_image_server_host or "127.0.0.1",
+        port=args.local_image_server_port,
+    )
 
     return PlateUpdateDispatcher(
         server_url=args.server_url,
         timeout=args.timeout,
         cooldown_seconds=args.plate_cooldown,
         firebase_publisher=firebase_publisher,
+        local_image_publisher=local_image_publisher,
     )
 
 
@@ -477,6 +515,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--plate-cooldown must be >= 0.")
     if args.firebase_service_account and not Path(args.firebase_service_account).exists():
         parser.error("--firebase-service-account path does not exist.")
+    if args.local_image_server_port <= 0 or args.local_image_server_port > 65535:
+        parser.error("--local-image-server-port must be in range 1..65535.")
 
     try:
         section_boxes = parse_section_boxes(args.section_box)

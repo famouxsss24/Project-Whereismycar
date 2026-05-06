@@ -10,7 +10,7 @@ Parking-lot license plate detection and OCR pipeline for Korean plates.
 
 ## Settings File
 
-All runtime options can be set in [`settings.json`](C:/Users/Sangjee/PycharmProjects/MobileRobotTemi/settings.json).
+All runtime options can be set in [`settings.json`](C:/Users/Sangjee/PycharmProjects/MobileRobotTemi/settings.json).  
 The app reads this file automatically by default.
 
 Use a different file:
@@ -97,15 +97,21 @@ Set these in `settings.json`:
 
 - `firebase_service_account`: path to service account JSON file
 - `firebase_database_url`: optional, auto-inferred from `project_id` if null
-- `firebase_storage_bucket`: optional, auto-inferred from `project_id` if null
 - `firebase_root_path`: DB root path (default `parking_lot`)
 - `plate_cooldown`: duplicate suppression time in seconds
+- `local_image_dir`: local folder for cropped plate images
+- `serve_local_images`: run built-in static file server for image URLs
+- `local_image_server_host`: static server host
+- `local_image_server_port`: static server port
+- `local_image_base_url`: optional override if you already host that folder elsewhere
 
 Example:
 
 ```bash
 python main.py --webcam --preview --detector yolo \
   --firebase-service-account secrets/firebase-service-account.json \
+  --serve-local-images \
+  --local-image-server-port 8787 \
   --plate-cooldown 30
 ```
 
@@ -120,6 +126,37 @@ Read one plate key:
 ```bash
 python check_db.py --service-account secrets/firebase-service-account.json --plate 123가4568 --pretty
 ```
+
+## Public Image URL via Cloudflare Quick Tunnel
+
+1. Install cloudflared (Windows):
+
+```bash
+winget install --id Cloudflare.cloudflared
+```
+
+2. Start your app (local image server on `127.0.0.1:8787`):
+
+```bash
+python main.py
+```
+
+3. In another terminal, expose the local image server:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Cloudflared prints a public URL like `https://xxxx-xxxx.trycloudflare.com`.
+
+4. Set the URL for this shell session and restart app:
+
+```bash
+$env:LOCAL_IMAGE_BASE_URL="https://xxxx-xxxx.trycloudflare.com"
+python main.py
+```
+
+Firebase `image_url` values will then use the public tunnel URL.
 
 ## Notes
 

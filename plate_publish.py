@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
 import time
+import uuid
 from dataclasses import dataclass
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import quote
 
 import cv2
 import numpy as np
@@ -15,15 +20,15 @@ from transport import post_json
 
 try:
     import firebase_admin
-    from firebase_admin import credentials, db, storage
+    from firebase_admin import credentials, db
 except ImportError:  # pragma: no cover - optional dependency
     firebase_admin = None  # type: ignore[assignment]
     credentials = None  # type: ignore[assignment]
     db = None  # type: ignore[assignment]
-    storage = None  # type: ignore[assignment]
 
 
 DIGITS_PATTERN = re.compile(r"\d")
+INVALID_FILE_CHARS_PATTERN = re.compile(r'[\\/:*?"<>|]+')
 
 
 @dataclass(frozen=True)
@@ -34,54 +39,32 @@ class PlateUpdate:
     image: np.ndarray | None
 
 
-class FirebasePlatePublisher:
+class _QuietStaticFileHandler(SimpleHTTPRequestHandler):
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
+class LocalImageWebPublisher:
     def __init__(
         self,
-        service_account_path: str,
-        database_url: str,
-        storage_bucket: str,
-        root_path: str = "parking_lot",
+        image_dir: str = "plate_images",
+        base_url: str | None = None,
+        serve: bool = True,
+        host: str = "127.0.0.1",
+        port: int = 8787,
     ) -> None:
-        if firebase_admin is None:
-            raise RuntimeError("firebase-admin is required. Run `pip install firebase-admin`.")
-        if not database_url:
-            raise ValueError("Firebase database URL is required.")
-        if not storage_bucket:
-            raise ValueError("Firebase storage bucket is required.")
+        self._root_dir = Path(image_dir).resolve()
+        self._root_dir.mkdir(parents=True, exist_ok=True)
+        self._base_url = base_url.rstrip("/") if base_url else None
+        self._server: ThreadingHTTPServer | None = None
+        self._server_thread: threading.Thread | None = None
 
-        credential = credentials.Certificate(service_account_path)
-        app_name = f"wimc-{hash((service_account_path, database_url, storage_bucket))}"
-        try:
-            self._app = firebase_admin.get_app(app_name)
-        except ValueError:
-            self._app = firebase_admin.initialize_app(
-                credential,
-                options={
-                    "databaseURL": database_url,
-                    "storageBucket": storage_bucket,
-                },
-                name=app_name,
-            )
-        self._bucket_name = storage_bucket
-        self._bucket = storage.bucket(name=self._bucket_name, app=self._app)
-        self._fallback_bucket_name = _derive_fallback_bucket_name(self._bucket_name)
-        self._root_path = root_path.strip("/") or "parking_lot"
-        self._storage_disabled = False
-        self._storage_disable_reason: str | None = None
+        if self._base_url is None and serve:
+            self._start_server(host=host, port=port)
+        if self._base_url:
+            print(f"Local plate image URL base: {self._base_url}", file=sys.stderr)
 
-    def publish(self, update: PlateUpdate) -> str:
-        image_url = self._upload_plate_image(update)
-        payload = {
-            "zone": update.zone,
-            "last4": update.last4,
-            "image_url": image_url,
-        }
-        db.reference(f"{self._root_path}/{update.plate}", app=self._app).set(payload)
-        return image_url
-
-    def _upload_plate_image(self, update: PlateUpdate) -> str:
-        if self._storage_disabled:
-            return ""
+    def save_and_get_url(self, update: PlateUpdate) -> str:
         if update.image is None or update.image.size == 0:
             return ""
 
@@ -89,47 +72,61 @@ class FirebasePlatePublisher:
         if not ok:
             return ""
 
-        timestamp = int(time.time())
-        blob_name = f"{self._root_path}/{update.plate}/{timestamp}.jpg"
-        image_bytes = encoded.tobytes()
-        uploaded_url, error_message = self._upload_blob(self._bucket, blob_name, image_bytes)
-        if uploaded_url:
-            return uploaded_url
+        plate_folder = _sanitize_path_segment(update.plate)
+        plate_dir = self._root_dir / plate_folder
+        plate_dir.mkdir(parents=True, exist_ok=True)
 
-        if self._fallback_bucket_name:
-            fallback_bucket = storage.bucket(name=self._fallback_bucket_name, app=self._app)
-            uploaded_url, fallback_error_message = self._upload_blob(fallback_bucket, blob_name, image_bytes)
-            if uploaded_url:
-                self._bucket = fallback_bucket
-                self._bucket_name = self._fallback_bucket_name
-                self._fallback_bucket_name = None
-                return uploaded_url
-            error_message = fallback_error_message or error_message
+        filename = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.jpg"
+        image_path = plate_dir / filename
+        image_path.write_bytes(encoded.tobytes())
 
-        self._maybe_disable_storage(error_message)
-        return ""
+        if not self._base_url:
+            return ""
+        return f"{self._base_url}/{quote(plate_folder)}/{quote(filename)}"
 
-    def _upload_blob(self, bucket, blob_name: str, image_bytes: bytes) -> tuple[str, str]:
+    def _start_server(self, host: str, port: int) -> None:
+        handler = partial(_QuietStaticFileHandler, directory=str(self._root_dir))
+        self._server = ThreadingHTTPServer((host, port), handler)
+        self._server_thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._server_thread.start()
+
+        public_host = host
+        if host in ("0.0.0.0", "::"):
+            public_host = "localhost"
+        self._base_url = f"http://{public_host}:{self._server.server_port}"
+
+
+class FirebasePlatePublisher:
+    def __init__(
+        self,
+        service_account_path: str,
+        database_url: str,
+        root_path: str = "parking_lot",
+    ) -> None:
+        if firebase_admin is None:
+            raise RuntimeError("firebase-admin is required. Run `pip install firebase-admin`.")
+        if not database_url:
+            raise ValueError("Firebase database URL is required.")
+
+        credential = credentials.Certificate(service_account_path)
+        app_name = f"wimc-{hash((service_account_path, database_url))}"
         try:
-            blob = bucket.blob(blob_name)
-            blob.upload_from_string(image_bytes, content_type="image/jpeg")
-            blob.make_public()
-            return blob.public_url, ""
-        except Exception as exc:
-            print(f"Storage upload skipped: {exc}", file=sys.stderr)
-            return "", str(exc)
+            self._app = firebase_admin.get_app(app_name)
+        except ValueError:
+            self._app = firebase_admin.initialize_app(
+                credential,
+                options={"databaseURL": database_url},
+                name=app_name,
+            )
+        self._root_path = root_path.strip("/") or "parking_lot"
 
-    def _maybe_disable_storage(self, error_message: str) -> None:
-        normalized = error_message.lower()
-        if "specified bucket does not exist" in normalized or "status code', 404" in normalized:
-            if not self._storage_disabled:
-                self._storage_disabled = True
-                self._storage_disable_reason = error_message
-                print(
-                    "Storage disabled for this run because bucket was not found. "
-                    "DB updates will continue with empty image_url.",
-                    file=sys.stderr,
-                )
+    def publish(self, update: PlateUpdate, image_url: str) -> None:
+        payload = {
+            "zone": update.zone,
+            "last4": update.last4,
+            "image_url": image_url,
+        }
+        db.reference(f"{self._root_path}/{update.plate}", app=self._app).set(payload)
 
 
 class PlateUpdateDispatcher:
@@ -139,11 +136,13 @@ class PlateUpdateDispatcher:
         timeout: float,
         cooldown_seconds: float = 30.0,
         firebase_publisher: FirebasePlatePublisher | None = None,
+        local_image_publisher: LocalImageWebPublisher | None = None,
     ) -> None:
         self._server_url = server_url
         self._timeout = timeout
         self._cooldown_seconds = cooldown_seconds
         self._firebase_publisher = firebase_publisher
+        self._local_image_publisher = local_image_publisher
         self._last_sent: dict[str, float] = {}
 
     def emit(self, analysis: ProcessedFrameAnalysis, pretty: bool) -> None:
@@ -155,9 +154,13 @@ class PlateUpdateDispatcher:
             if not self._is_cooldown_elapsed(update.plate):
                 continue
 
-            image_url = self._send_to_firebase(update)
-            self._send_to_server(update, image_url)
-            self._last_sent[update.plate] = time.monotonic()
+            try:
+                image_url = self._build_image_url(update)
+                self._send_to_firebase(update, image_url)
+                self._send_to_server(update, image_url)
+                self._last_sent[update.plate] = time.monotonic()
+            except Exception as exc:
+                print(f"Publish error: {exc}", file=sys.stderr)
 
     def _collect_updates(self, sections: list[ProcessedSectionResult]) -> list[PlateUpdate]:
         updates: dict[str, PlateUpdate] = {}
@@ -181,6 +184,11 @@ class PlateUpdateDispatcher:
             )
         return list(updates.values())
 
+    def _build_image_url(self, update: PlateUpdate) -> str:
+        if self._local_image_publisher is None:
+            return ""
+        return self._local_image_publisher.save_and_get_url(update)
+
     def _send_to_server(self, update: PlateUpdate, image_url: str) -> None:
         if not self._server_url:
             return
@@ -199,10 +207,10 @@ class PlateUpdateDispatcher:
         if content:
             print(content, file=sys.stderr)
 
-    def _send_to_firebase(self, update: PlateUpdate) -> str:
+    def _send_to_firebase(self, update: PlateUpdate, image_url: str) -> None:
         if self._firebase_publisher is None:
-            return ""
-        return self._firebase_publisher.publish(update)
+            return
+        self._firebase_publisher.publish(update, image_url)
 
     def _is_cooldown_elapsed(self, plate: str) -> bool:
         if self._cooldown_seconds <= 0:
@@ -231,12 +239,6 @@ def normalize_firebase_database_url(project_id: str, explicit_url: str | None) -
     return f"https://{normalized}-default-rtdb.firebaseio.com"
 
 
-def normalize_firebase_storage_bucket(project_id: str, explicit_bucket: str | None) -> str:
-    if explicit_bucket:
-        return explicit_bucket
-    return f"{project_id.strip()}.firebasestorage.app"
-
-
 def resolve_project_id_from_service_account(service_account_path: str) -> str:
     path = Path(service_account_path)
     with path.open("r", encoding="utf-8") as service_account_file:
@@ -247,9 +249,6 @@ def resolve_project_id_from_service_account(service_account_path: str) -> str:
     return project_id
 
 
-def _derive_fallback_bucket_name(bucket_name: str) -> str | None:
-    if bucket_name.endswith(".appspot.com"):
-        return bucket_name.replace(".appspot.com", ".firebasestorage.app")
-    if bucket_name.endswith(".firebasestorage.app"):
-        return bucket_name.replace(".firebasestorage.app", ".appspot.com")
-    return None
+def _sanitize_path_segment(value: str) -> str:
+    sanitized = INVALID_FILE_CHARS_PATTERN.sub("_", value.strip())
+    return sanitized or "unknown_plate"

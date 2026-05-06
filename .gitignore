@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 firebase-service-account*.json
+plate_images/
