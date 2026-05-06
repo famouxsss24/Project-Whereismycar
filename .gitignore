@@ -2,3 +2,4 @@
 .venv-py314-broken/
 __pycache__/
 *.pyc
+firebase-service-account*.json

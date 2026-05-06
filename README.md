@@ -88,6 +88,39 @@ Send JSON payload to a server:
 python main.py test1.jpg --server-url http://localhost:8000/plates --timeout 10
 ```
 
+## Firebase Integration (Filtered Updates)
+
+Only valid YOLO plate detections are sent to server/Firebase.  
+Duplicate plate updates are suppressed for `plate_cooldown` seconds (default `30`).
+
+Set these in `settings.json`:
+
+- `firebase_service_account`: path to service account JSON file
+- `firebase_database_url`: optional, auto-inferred from `project_id` if null
+- `firebase_storage_bucket`: optional, auto-inferred from `project_id` if null
+- `firebase_root_path`: DB root path (default `parking_lot`)
+- `plate_cooldown`: duplicate suppression time in seconds
+
+Example:
+
+```bash
+python main.py --webcam --preview --detector yolo \
+  --firebase-service-account secrets/firebase-service-account.json \
+  --plate-cooldown 30
+```
+
+Check current DB data:
+
+```bash
+python check_db.py --service-account secrets/firebase-service-account.json --pretty
+```
+
+Read one plate key:
+
+```bash
+python check_db.py --service-account secrets/firebase-service-account.json --plate 123가4568 --pretty
+```
+
 ## Notes
 
 - `--yolo-only` disables heuristic fallback when YOLO misses.

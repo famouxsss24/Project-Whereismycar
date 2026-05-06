@@ -1,6 +1,6 @@
 {
-  "image_path": "test1.jpg",
-  "webcam": false,
+  "image_path": null,
+  "webcam": true,
   "camera": 0,
   "sections": 3,
   "section_boxes": [
@@ -24,15 +24,20 @@
     }
   ],
   "detector": "yolo",
-  "yolo_only": false,
+  "yolo_only": true,
   "yolo_model": "models/license-plate-finetune-v1m.pt",
   "yolo_conf": 0.25,
   "yolo_imgsz": 640,
   "layout": "columns",
   "server_url": null,
+  "firebase_service_account": "secrets/firebase-service-account.json",
+  "firebase_database_url": "https://wimc-51ff9-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "firebase_storage_bucket": null,
+  "firebase_root_path": "parking_lot",
   "timeout": 10.0,
   "interval": 1.0,
+  "plate_cooldown": 30.0,
   "loop": false,
-  "preview": false,
+  "preview": true,
   "pretty": true
 }

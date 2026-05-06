@@ -12,11 +12,17 @@ import cv2
 import numpy as np
 
 from parking_processor import ParkingLotProcessor
+from plate_publish import (
+    FirebasePlatePublisher,
+    PlateUpdateDispatcher,
+    normalize_firebase_database_url,
+    normalize_firebase_storage_bucket,
+    resolve_project_id_from_service_account,
+)
 from parking_types import ProcessedFrameResult
 from plate_detection import resolve_default_yolo_model
 from plate_ocr import load_image
 from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, draw_crop_debug_window, draw_preview_frame
-from transport import emit_payload
 
 
 DEFAULT_SETTINGS_PATH = Path("settings.json")
@@ -193,10 +199,24 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         defaults["layout"] = layout
     if "server_url" in raw_settings:
         defaults["server_url"] = _as_optional_str(raw_settings["server_url"], "server_url")
+    if "firebase_service_account" in raw_settings:
+        defaults["firebase_service_account"] = _as_optional_str(
+            raw_settings["firebase_service_account"], "firebase_service_account"
+        )
+    if "firebase_database_url" in raw_settings:
+        defaults["firebase_database_url"] = _as_optional_str(raw_settings["firebase_database_url"], "firebase_database_url")
+    if "firebase_storage_bucket" in raw_settings:
+        defaults["firebase_storage_bucket"] = _as_optional_str(
+            raw_settings["firebase_storage_bucket"], "firebase_storage_bucket"
+        )
+    if "firebase_root_path" in raw_settings:
+        defaults["firebase_root_path"] = _as_optional_str(raw_settings["firebase_root_path"], "firebase_root_path")
     if "timeout" in raw_settings:
         defaults["timeout"] = _as_float(raw_settings["timeout"], "timeout")
     if "interval" in raw_settings:
         defaults["interval"] = _as_float(raw_settings["interval"], "interval")
+    if "plate_cooldown" in raw_settings:
+        defaults["plate_cooldown"] = _as_float(raw_settings["plate_cooldown"], "plate_cooldown")
     if "loop" in raw_settings:
         defaults["loop"] = _as_bool(raw_settings["loop"], "loop")
     if "preview" in raw_settings:
@@ -211,12 +231,14 @@ def process_webcam_frame(
     processor: ParkingLotProcessor,
     frame: np.ndarray,
     camera_index: int,
-    server_url: str | None,
-    timeout: float,
+    dispatcher: PlateUpdateDispatcher,
     pretty: bool,
 ) -> ProcessedFrameResult:
     analysis = processor.process_frame(frame, "webcam", str(camera_index))
-    emit_payload(analysis.payload, server_url, timeout, pretty)
+    try:
+        dispatcher.emit(analysis, pretty)
+    except Exception as exc:  # pragma: no cover - live preview path
+        print(f"Publish error: {exc}", file=sys.stderr)
     return ProcessedFrameResult(frame=frame, analysis=analysis)
 
 
@@ -266,8 +288,31 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
         help="How to divide the image. Default: columns.",
     )
     parser.add_argument("--server-url", help="Optional server URL to receive the JSON via POST.")
+    parser.add_argument(
+        "--firebase-service-account",
+        help="Path to Firebase service account JSON. Enables Firebase DB + Storage upload.",
+    )
+    parser.add_argument(
+        "--firebase-database-url",
+        help="Firebase Realtime Database URL. If omitted, inferred from project_id.",
+    )
+    parser.add_argument(
+        "--firebase-storage-bucket",
+        help="Firebase Storage bucket name. If omitted, inferred from project_id.",
+    )
+    parser.add_argument(
+        "--firebase-root-path",
+        default="parking_lot",
+        help="Realtime DB root path for plate records. Default: parking_lot.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0, help="POST timeout in seconds. Default: 10.")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between webcam OCR runs. Default: 1.")
+    parser.add_argument(
+        "--plate-cooldown",
+        type=float,
+        default=30.0,
+        help="Seconds to suppress duplicate updates for the same plate. Default: 30.",
+    )
     parser.add_argument("--loop", action="store_true", help="Continuously process webcam frames.")
     parser.add_argument("--preview", action="store_true", help="Show live preview and crop debug windows.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print the JSON output.")
@@ -276,22 +321,43 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
     return parser
 
 
-def run_once(args: argparse.Namespace, processor: ParkingLotProcessor) -> int:
+def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
+    firebase_publisher: FirebasePlatePublisher | None = None
+    if args.firebase_service_account:
+        project_id = resolve_project_id_from_service_account(args.firebase_service_account)
+        firebase_database_url = normalize_firebase_database_url(project_id, args.firebase_database_url)
+        firebase_storage_bucket = normalize_firebase_storage_bucket(project_id, args.firebase_storage_bucket)
+        firebase_publisher = FirebasePlatePublisher(
+            service_account_path=args.firebase_service_account,
+            database_url=firebase_database_url,
+            storage_bucket=firebase_storage_bucket,
+            root_path=args.firebase_root_path or "parking_lot",
+        )
+
+    return PlateUpdateDispatcher(
+        server_url=args.server_url,
+        timeout=args.timeout,
+        cooldown_seconds=args.plate_cooldown,
+        firebase_publisher=firebase_publisher,
+    )
+
+
+def run_once(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
     if args.webcam:
         frame = capture_webcam_frame(args.camera)
-        payload = processor.process_frame(frame, "webcam", str(args.camera)).payload
+        analysis = processor.process_frame(frame, "webcam", str(args.camera))
     else:
         image_path = Path(args.image_path)
         if not image_path.exists():
             print(f"Image not found: {image_path}", file=sys.stderr)
             return 1
-        payload = processor.process_frame(load_image(image_path), "image", str(image_path)).payload
+        analysis = processor.process_frame(load_image(image_path), "image", str(image_path))
 
-    emit_payload(payload, args.server_url, args.timeout, args.pretty)
+    dispatcher.emit(analysis, args.pretty)
     return 0
 
 
-def run_loop(args: argparse.Namespace, processor: ParkingLotProcessor) -> int:
+def run_loop(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
     capture = open_camera(args.camera)
     try:
         while True:
@@ -299,13 +365,13 @@ def run_loop(args: argparse.Namespace, processor: ParkingLotProcessor) -> int:
             if not ok or frame is None:
                 raise RuntimeError("Unable to read a frame from the webcam.")
             analysis = processor.process_frame(frame, "webcam", str(args.camera))
-            emit_payload(analysis.payload, args.server_url, args.timeout, args.pretty)
+            dispatcher.emit(analysis, args.pretty)
             time.sleep(args.interval)
     finally:
         capture.release()
 
 
-def run_preview_loop(args: argparse.Namespace, processor: ParkingLotProcessor) -> int:
+def run_preview_loop(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
     capture = open_camera(args.camera)
     latest_result: ProcessedFrameResult | None = None
     latest_error: str | None = None
@@ -339,8 +405,7 @@ def run_preview_loop(args: argparse.Namespace, processor: ParkingLotProcessor) -
                         processor,
                         pending_frame,
                         args.camera,
-                        args.server_url,
-                        args.timeout,
+                        dispatcher,
                         args.pretty,
                     )
                     last_submission_at = now
@@ -408,6 +473,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--interval must be greater than 0.")
     if args.timeout <= 0:
         parser.error("--timeout must be greater than 0.")
+    if args.plate_cooldown < 0:
+        parser.error("--plate-cooldown must be >= 0.")
+    if args.firebase_service_account and not Path(args.firebase_service_account).exists():
+        parser.error("--firebase-service-account path does not exist.")
 
     try:
         section_boxes = parse_section_boxes(args.section_box)
@@ -418,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--detector yolo requires --yolo-model or a supported default model in `models/`.")
 
     try:
+        dispatcher = build_dispatcher(args)
         processor = ParkingLotProcessor(
             section_count=args.sections,
             layout=args.layout,
@@ -429,10 +499,10 @@ def main(argv: list[str] | None = None) -> int:
             allow_yolo_fallback=not args.yolo_only,
         )
         if args.preview:
-            return run_preview_loop(args, processor)
+            return run_preview_loop(args, processor, dispatcher)
         if args.loop:
-            return run_loop(args, processor)
-        return run_once(args, processor)
+            return run_loop(args, processor, dispatcher)
+        return run_once(args, processor, dispatcher)
     except KeyboardInterrupt:
         return 0
     except Exception as exc:
