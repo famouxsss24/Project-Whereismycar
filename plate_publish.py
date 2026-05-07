@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 DIGITS_PATTERN = re.compile(r"\d")
 INVALID_FILE_CHARS_PATTERN = re.compile(r'[\\/:*?"<>|]+')
+PLATE_IMAGE_SIZE = (120, 30)  # width, height
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class LocalImageWebPublisher:
         if update.image is None or update.image.size == 0:
             return ""
 
-        ok, encoded = cv2.imencode(".jpg", update.image)
+        ok, encoded = _encode_plate_jpg(update.image)
         if not ok:
             return ""
 
@@ -140,7 +141,7 @@ class AzureBlobImagePublisher:
         if update.image is None or update.image.size == 0:
             return ""
 
-        ok, encoded = cv2.imencode(".jpg", update.image)
+        ok, encoded = _encode_plate_jpg(update.image)
         if not ok:
             return ""
 
@@ -347,3 +348,8 @@ def _connection_string_value(connection_string: str, key: str) -> str:
         if name.strip().lower() == key.lower():
             return value.strip()
     return ""
+
+
+def _encode_plate_jpg(image: np.ndarray) -> tuple[bool, np.ndarray]:
+    resized = cv2.resize(image, PLATE_IMAGE_SIZE, interpolation=cv2.INTER_AREA)
+    return cv2.imencode(".jpg", resized)

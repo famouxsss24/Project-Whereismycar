@@ -161,6 +161,27 @@ Read one plate key:
 python check_db.py --service-account secrets/firebase-service-account.json --plate 123가4568 --pretty
 ```
 
+Refresh all Azure Blob SAS URLs in Firebase (dry run):
+
+```bash
+python refresh_firebase_blob_sas.py \
+  --service-account secrets/firebase-service-account.json \
+  --database-url https://wimc-51ff9-default-rtdb.asia-southeast1.firebasedatabase.app \
+  --azure-secrets-path secrets/azure-blob.json \
+  --ttl-hours 168 \
+  --dry-run
+```
+
+Apply updates:
+
+```bash
+python refresh_firebase_blob_sas.py \
+  --service-account secrets/firebase-service-account.json \
+  --database-url https://wimc-51ff9-default-rtdb.asia-southeast1.firebasedatabase.app \
+  --azure-secrets-path secrets/azure-blob.json \
+  --ttl-hours 168
+```
+
 ## Public Image URL via Cloudflare Quick Tunnel
 
 1. Install cloudflared (Windows):
