@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,16 @@ except ImportError:  # pragma: no cover - optional dependency
     firebase_admin = None  # type: ignore[assignment]
     credentials = None  # type: ignore[assignment]
     db = None  # type: ignore[assignment]
+
+try:
+    from azure.core.exceptions import ResourceExistsError
+    from azure.storage.blob import BlobSasPermissions, BlobServiceClient, ContentSettings, generate_blob_sas
+except ImportError:  # pragma: no cover - optional dependency
+    ResourceExistsError = None  # type: ignore[assignment]
+    BlobSasPermissions = None  # type: ignore[assignment]
+    BlobServiceClient = None  # type: ignore[assignment]
+    ContentSettings = None  # type: ignore[assignment]
+    generate_blob_sas = None  # type: ignore[assignment]
 
 
 DIGITS_PATTERN = re.compile(r"\d")
@@ -96,6 +107,76 @@ class LocalImageWebPublisher:
         self._base_url = f"http://{public_host}:{self._server.server_port}"
 
 
+class AzureBlobImagePublisher:
+    def __init__(
+        self,
+        connection_string: str,
+        container_name: str,
+        blob_prefix: str = "plate_images",
+        sas_ttl_minutes: int = 0,
+    ) -> None:
+        if BlobServiceClient is None or ContentSettings is None:
+            raise RuntimeError("azure-storage-blob is required. Run `pip install azure-storage-blob`.")
+        if not connection_string.strip():
+            raise ValueError("Azure storage connection string is required.")
+        if not container_name.strip():
+            raise ValueError("Azure blob container name is required.")
+
+        self._service_client = BlobServiceClient.from_connection_string(connection_string)
+        self._container_name = container_name.strip()
+        self._blob_prefix = blob_prefix.strip().strip("/")
+        self._sas_ttl_minutes = max(0, int(sas_ttl_minutes))
+        self._account_name = _connection_string_value(connection_string, "AccountName")
+        self._account_key = _connection_string_value(connection_string, "AccountKey")
+
+        container_client = self._service_client.get_container_client(self._container_name)
+        try:
+            container_client.create_container()
+        except Exception as exc:
+            if ResourceExistsError is None or not isinstance(exc, ResourceExistsError):
+                raise
+
+    def upload_and_get_url(self, update: PlateUpdate) -> str:
+        if update.image is None or update.image.size == 0:
+            return ""
+
+        ok, encoded = cv2.imencode(".jpg", update.image)
+        if not ok:
+            return ""
+
+        plate_folder = _sanitize_path_segment(update.plate)
+        filename = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.jpg"
+        blob_name = "/".join(part for part in (self._blob_prefix, plate_folder, filename) if part)
+        blob_client = self._service_client.get_blob_client(container=self._container_name, blob=blob_name)
+        blob_client.upload_blob(
+            encoded.tobytes(),
+            overwrite=True,
+            content_settings=ContentSettings(content_type="image/jpeg"),
+        )
+        return self._resolve_blob_url(blob_client, blob_name)
+
+    def _resolve_blob_url(self, blob_client: object, blob_name: str) -> str:
+        if (
+            self._sas_ttl_minutes <= 0
+            or not self._account_name
+            or not self._account_key
+            or generate_blob_sas is None
+            or BlobSasPermissions is None
+        ):
+            return blob_client.url  # type: ignore[attr-defined]
+
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=self._sas_ttl_minutes)
+        sas_token = generate_blob_sas(
+            account_name=self._account_name,
+            container_name=self._container_name,
+            blob_name=blob_name,
+            account_key=self._account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry,
+        )
+        return f"{blob_client.url}?{sas_token}"  # type: ignore[attr-defined]
+
+
 class FirebasePlatePublisher:
     def __init__(
         self,
@@ -137,12 +218,14 @@ class PlateUpdateDispatcher:
         cooldown_seconds: float = 30.0,
         firebase_publisher: FirebasePlatePublisher | None = None,
         local_image_publisher: LocalImageWebPublisher | None = None,
+        azure_image_publisher: AzureBlobImagePublisher | None = None,
     ) -> None:
         self._server_url = server_url
         self._timeout = timeout
         self._cooldown_seconds = cooldown_seconds
         self._firebase_publisher = firebase_publisher
         self._local_image_publisher = local_image_publisher
+        self._azure_image_publisher = azure_image_publisher
         self._last_sent: dict[str, float] = {}
 
     def emit(self, analysis: ProcessedFrameAnalysis, pretty: bool) -> None:
@@ -185,6 +268,8 @@ class PlateUpdateDispatcher:
         return list(updates.values())
 
     def _build_image_url(self, update: PlateUpdate) -> str:
+        if self._azure_image_publisher is not None:
+            return self._azure_image_publisher.upload_and_get_url(update)
         if self._local_image_publisher is None:
             return ""
         return self._local_image_publisher.save_and_get_url(update)
@@ -252,3 +337,13 @@ def resolve_project_id_from_service_account(service_account_path: str) -> str:
 def _sanitize_path_segment(value: str) -> str:
     sanitized = INVALID_FILE_CHARS_PATTERN.sub("_", value.strip())
     return sanitized or "unknown_plate"
+
+
+def _connection_string_value(connection_string: str, key: str) -> str:
+    for segment in connection_string.split(";"):
+        if "=" not in segment:
+            continue
+        name, value = segment.split("=", 1)
+        if name.strip().lower() == key.lower():
+            return value.strip()
+    return ""

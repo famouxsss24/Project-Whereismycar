@@ -5,3 +5,4 @@ paddlepaddle==3.0.0
 Pillow>=10,<12
 ultralytics>=8.3,<9
 firebase-admin>=6.6,<7
+azure-storage-blob>=12.25,<13

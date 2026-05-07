@@ -104,6 +104,11 @@ Set these in `settings.json`:
 - `local_image_server_host`: static server host
 - `local_image_server_port`: static server port
 - `local_image_base_url`: optional override if you already host that folder elsewhere
+- `azure_storage_connection_string`: Azure Storage connection string for Blob uploads
+- `azure_blob_container`: Blob container name for plate JPG uploads
+- `azure_blob_prefix`: optional blob path prefix (default `plate_images`)
+- `azure_blob_sas_ttl_minutes`: optional read-only SAS URL TTL in minutes (0 = plain blob URL)
+- `azure_secrets_path`: optional path to Azure secrets JSON file (recommended)
 
 Example:
 
@@ -114,6 +119,35 @@ python main.py --webcam --preview --detector yolo \
   --local-image-server-port 8787 \
   --plate-cooldown 30
 ```
+
+## Azure Blob Storage for Plate JPGs
+
+When both `azure_storage_connection_string` and `azure_blob_container` are resolved, cropped plate JPG files are uploaded to Azure Blob Storage and published as `image_url`.
+
+Recommended secret file (`secrets/azure-blob.json`):
+
+```json
+{
+  "azure_storage_connection_string": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net",
+  "azure_blob_container": "plate-images",
+  "azure_blob_prefix": "parking_lot",
+  "azure_blob_sas_ttl_minutes": 60
+}
+```
+
+Example:
+
+```bash
+python main.py --webcam --preview --detector yolo \
+  --firebase-service-account secrets/firebase-service-account.json \
+  --azure-secrets-path secrets/azure-blob.json
+```
+
+Notes:
+
+- If `azure_blob_sas_ttl_minutes` is `0`, the app stores and returns the plain blob URL.
+- If `azure_blob_sas_ttl_minutes` is `> 0`, the app appends a read-only SAS token to `image_url`.
+- If Azure settings are not provided, the app uses existing local image hosting behavior.
 
 Check current DB data:
 

@@ -13,6 +13,7 @@ import numpy as np
 
 from parking_processor import ParkingLotProcessor
 from plate_publish import (
+    AzureBlobImagePublisher,
     FirebasePlatePublisher,
     LocalImageWebPublisher,
     PlateUpdateDispatcher,
@@ -219,6 +220,18 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         )
     if "local_image_server_port" in raw_settings:
         defaults["local_image_server_port"] = _as_int(raw_settings["local_image_server_port"], "local_image_server_port")
+    if "azure_storage_connection_string" in raw_settings:
+        defaults["azure_storage_connection_string"] = _as_optional_str(
+            raw_settings["azure_storage_connection_string"], "azure_storage_connection_string"
+        )
+    if "azure_blob_container" in raw_settings:
+        defaults["azure_blob_container"] = _as_optional_str(raw_settings["azure_blob_container"], "azure_blob_container")
+    if "azure_blob_prefix" in raw_settings:
+        defaults["azure_blob_prefix"] = _as_optional_str(raw_settings["azure_blob_prefix"], "azure_blob_prefix")
+    if "azure_blob_sas_ttl_minutes" in raw_settings:
+        defaults["azure_blob_sas_ttl_minutes"] = _as_int(raw_settings["azure_blob_sas_ttl_minutes"], "azure_blob_sas_ttl_minutes")
+    if "azure_secrets_path" in raw_settings:
+        defaults["azure_secrets_path"] = _as_optional_str(raw_settings["azure_secrets_path"], "azure_secrets_path")
     if "timeout" in raw_settings:
         defaults["timeout"] = _as_float(raw_settings["timeout"], "timeout")
     if "interval" in raw_settings:
@@ -248,6 +261,25 @@ def process_webcam_frame(
     except Exception as exc:  # pragma: no cover - live preview path
         print(f"Publish error: {exc}", file=sys.stderr)
     return ProcessedFrameResult(frame=frame, analysis=analysis)
+
+
+def load_azure_secrets(path_value: str | None) -> dict[str, object]:
+    if not path_value:
+        return {}
+
+    secrets_path = Path(path_value)
+    if not secrets_path.exists():
+        raise ValueError(f"Azure secrets file not found: {secrets_path}")
+
+    try:
+        with secrets_path.open("r", encoding="utf-8") as secrets_file:
+            data = json.load(secrets_file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Failed to parse Azure secrets file `{secrets_path}`: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Azure secrets file `{secrets_path}` must contain a JSON object.")
+    return data
 
 
 def build_parser(defaults: dict[str, object] | None = None) -> argparse.ArgumentParser:
@@ -335,6 +367,32 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
         default=8787,
         help="Port for built-in local image server. Default: 8787.",
     )
+    parser.add_argument(
+        "--azure-storage-connection-string",
+        help="Azure Storage connection string. When set with --azure-blob-container, plate JPGs are uploaded to Blob Storage.",
+    )
+    parser.add_argument(
+        "--azure-blob-container",
+        help="Azure Blob container name for plate JPG uploads.",
+    )
+    parser.add_argument(
+        "--azure-blob-prefix",
+        default="plate_images",
+        help="Blob path prefix inside the container. Default: plate_images.",
+    )
+    parser.add_argument(
+        "--azure-blob-sas-ttl-minutes",
+        type=int,
+        default=0,
+        help="If >0, append a read-only SAS token valid for this many minutes to image URLs. Default: 0.",
+    )
+    parser.add_argument(
+        "--azure-secrets-path",
+        help=(
+            "Path to Azure secrets JSON file. Supported keys: "
+            "azure_storage_connection_string, azure_blob_container, azure_blob_prefix, azure_blob_sas_ttl_minutes."
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=10.0, help="POST timeout in seconds. Default: 10.")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between webcam OCR runs. Default: 1.")
     parser.add_argument(
@@ -362,14 +420,41 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
             root_path=args.firebase_root_path or "parking_lot",
         )
 
-    local_image_base_url = args.local_image_base_url or os.environ.get("LOCAL_IMAGE_BASE_URL")
-    local_image_publisher = LocalImageWebPublisher(
-        image_dir=args.local_image_dir or "plate_images",
-        base_url=local_image_base_url,
-        serve=args.serve_local_images,
-        host=args.local_image_server_host or "127.0.0.1",
-        port=args.local_image_server_port,
+    azure_secrets = load_azure_secrets(args.azure_secrets_path)
+    azure_storage_connection_string = args.azure_storage_connection_string or _as_optional_str(
+        azure_secrets.get("azure_storage_connection_string"), "azure_storage_connection_string"
     )
+    azure_blob_container = args.azure_blob_container or _as_optional_str(
+        azure_secrets.get("azure_blob_container"), "azure_blob_container"
+    )
+    azure_blob_prefix = args.azure_blob_prefix or _as_optional_str(
+        azure_secrets.get("azure_blob_prefix"), "azure_blob_prefix"
+    )
+    azure_blob_sas_ttl_minutes = args.azure_blob_sas_ttl_minutes
+    if azure_blob_sas_ttl_minutes == 0 and "azure_blob_sas_ttl_minutes" in azure_secrets:
+        azure_blob_sas_ttl_minutes = _as_int(
+            azure_secrets.get("azure_blob_sas_ttl_minutes"), "azure_blob_sas_ttl_minutes"
+        )
+
+    azure_image_publisher: AzureBlobImagePublisher | None = None
+    if azure_storage_connection_string and azure_blob_container:
+        azure_image_publisher = AzureBlobImagePublisher(
+            connection_string=azure_storage_connection_string,
+            container_name=azure_blob_container,
+            blob_prefix=azure_blob_prefix or "plate_images",
+            sas_ttl_minutes=azure_blob_sas_ttl_minutes,
+        )
+
+    local_image_publisher: LocalImageWebPublisher | None = None
+    if azure_image_publisher is None:
+        local_image_base_url = args.local_image_base_url or os.environ.get("LOCAL_IMAGE_BASE_URL")
+        local_image_publisher = LocalImageWebPublisher(
+            image_dir=args.local_image_dir or "plate_images",
+            base_url=local_image_base_url,
+            serve=args.serve_local_images,
+            host=args.local_image_server_host or "127.0.0.1",
+            port=args.local_image_server_port,
+        )
 
     return PlateUpdateDispatcher(
         server_url=args.server_url,
@@ -377,6 +462,7 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
         cooldown_seconds=args.plate_cooldown,
         firebase_publisher=firebase_publisher,
         local_image_publisher=local_image_publisher,
+        azure_image_publisher=azure_image_publisher,
     )
 
 
@@ -517,6 +603,28 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--firebase-service-account path does not exist.")
     if args.local_image_server_port <= 0 or args.local_image_server_port > 65535:
         parser.error("--local-image-server-port must be in range 1..65535.")
+    if args.azure_blob_sas_ttl_minutes < 0:
+        parser.error("--azure-blob-sas-ttl-minutes must be >= 0.")
+    azure_secrets_data: dict[str, object] = {}
+    try:
+        azure_secrets_data = load_azure_secrets(args.azure_secrets_path)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        effective_connection = args.azure_storage_connection_string or _as_optional_str(
+            azure_secrets_data.get("azure_storage_connection_string"), "azure_storage_connection_string"
+        )
+        effective_container = args.azure_blob_container or _as_optional_str(
+            azure_secrets_data.get("azure_blob_container"), "azure_blob_container"
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if bool(effective_connection) != bool(effective_container):
+        parser.error(
+            "Azure configuration requires both connection string and container "
+            "(via CLI/settings and/or --azure-secrets-path file)."
+        )
 
     try:
         section_boxes = parse_section_boxes(args.section_box)
