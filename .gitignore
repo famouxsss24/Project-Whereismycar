@@ -1,0 +1,31 @@
+# Android Studio / Gradle
+*.iml
+.gradle/
+.idea/
+local.properties
+.externalNativeBuild
+.cxx
+
+# Build outputs
+build/
+/build
+/captures
+*.apk
+*.aab
+*.ap_
+*.dex
+bin/
+gen/
+out/
+release/
+
+# Keystore (절대 올리지 말 것)
+*.jks
+*.keystore
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
