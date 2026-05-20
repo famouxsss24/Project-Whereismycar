@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="48dp"
+    android:background="#1A1A2E">
+
+    <!-- 타이틀 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="내 차로"
+        android:textSize="56sp"
+        android:textStyle="bold"
+        android:textColor="#E94560"
+        android:layout_marginBottom="12dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="차량 번호판 뒷 4자리를 입력하세요"
+        android:textSize="22sp"
+        android:textColor="#AAAAAA"
+        android:layout_marginBottom="40dp"/>
+
+    <!-- 뒷 4자리 입력 -->
+    <EditText
+        android:id="@+id/etPlateNumber"
+        android:layout_width="360dp"
+        android:layout_height="wrap_content"
+        android:hint="0000"
+        android:textSize="56sp"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#555555"
+        android:inputType="number"
+        android:maxLength="4"
+        android:gravity="center"
+        android:padding="20dp"
+        android:layout_marginBottom="24dp"/>
+
+    <Button
+        android:id="@+id/btnSearch"
+        android:layout_width="360dp"
+        android:layout_height="84dp"
+        android:text="차량 찾기"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#E94560"
+        android:layout_marginBottom="36dp"/>
+
+    <!-- 상태 메시지 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Temi 연결 대기 중..."
+        android:textSize="20sp"
+        android:textColor="#AAAAAA"
+        android:gravity="center"
+        android:layout_marginBottom="20dp"/>
+
+    <!-- 단일 결과: 구역 표시 -->
+    <TextView
+        android:id="@+id/tvZone"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="80sp"
+        android:textStyle="bold"
+        android:textColor="#E94560"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- 중복 결과: 번호판 이미지 선택 -->
+    <TextView
+        android:id="@+id/tvSelectLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="본인 차량을 선택하세요"
+        android:textSize="32sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:visibility="gone"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="28dp"/>
+
+    <HorizontalScrollView
+        android:id="@+id/scrollPlates"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/llPlateImages"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"/>
+
+    </HorizontalScrollView>
+
+</LinearLayout>
