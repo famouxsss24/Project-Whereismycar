@@ -289,7 +289,7 @@ public class MainActivity extends Activity
     private int readBatteryLevel() {
         try {
             BatteryData bd = robot.getBatteryData();
-            return bd != null ? bd.getLevel() : -1;
+            return bd != null ? bd.getBatteryPercentage() : -1;
         } catch (Exception e) {
             return -1;
         }
