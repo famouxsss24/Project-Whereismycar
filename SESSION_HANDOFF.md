@@ -103,7 +103,77 @@ HOME_BASE = "home base"      // Temi 기본 충전소 (소문자 주의!)
 
 ---
 
-## 🚧 진행할 작업 (최종 발표용 부가 기능 4개)
+## 🚧 진행할 작업 (최종 발표용 부가 기능 5개)
+
+---
+
+### ⭐ 우선순위 0 — 카카오페이 테스트 가맹점 결제 연동 (확정 2026-05-08)
+
+**결정 사항**: 자체 결제(내차로페이) 가 아닌 **카카오페이 테스트 가맹점** 으로 진행
+
+#### 기본 정보
+- **테스트 가맹점 ID (CID)**: `TC0ONETIME`
+- **결제 흐름**: Temi 앱 → 카카오페이 ready API → 사용자 카톡 인증 → 결제 완료 콜백 → Temi 안내 시작
+- **실결제 X** (테스트 가맹점이라 가상 머니로 결제)
+
+#### 필요한 작업
+1. 카카오페이 개발자 콘솔에서 테스트 Secret Key 발급 (https://developers.kakaopay.com)
+2. Firebase 스키마에 결제 필드 추가:
+   - `entry_time`: 입차 시각 (밀리초 또는 yyyy-MM-dd HH:mm:ss)
+   - `is_paid`: boolean
+3. 검색 후 요금 계산 → `is_paid` 확인 → 미결제 시 카카오페이 ready 호출
+4. WebView 띄워서 `next_redirect_mobile_url` 표시
+5. WebView URL 감지로 success/fail/cancel 처리
+6. 결제 완료 시 Firebase `is_paid = true` 업데이트 → Temi 출발
+
+#### ⚠️ 발표 전 반드시 체크해야 할 것
+- [ ] **Wi-Fi 안정성 확보** (Temi + 시연자 폰)
+- [ ] **시연자 폰에 카카오톡 로그인** + 결제 비밀번호 숙지
+- [ ] **사전 리허설 1회 이상** (결제 ready ~ 완료까지 전체 흐름)
+- [ ] **콜백 URL** 처리 방식 결정:
+  - 옵션 A: WebView 내 URL 감지 (서현님 코드 방식)
+  - 옵션 B: Firebase Hosting URL (`https://wimc-51ff9.web.app/payment/success`)
+- [ ] **Secret Key 보안 처리**:
+  - `local.properties` 또는 별도 변수로 분리
+  - GitHub에 노출되지 않도록 `.gitignore` 처리
+- [ ] **백업 시나리오 준비** (결제 실패 시 수동으로 `is_paid = true` 업데이트할 숨겨진 버튼)
+
+#### 알려진 위험 요소
+- 발표 환경 Wi-Fi 끊기면 결제 ready API 실패
+- 사용자 폰 카카오톡 비밀번호 입력 시간 변수
+- 카카오페이 서버 응답 지연 가능 (보통 1~3초)
+- WebView 콜백 URL 감지 실패 시 결제 완료 인식 못 함
+
+#### 발표 멘트 (예상 질문 대비)
+> Q: "진짜 결제 되나요?"
+> A: "**카카오페이 테스트 가맹점 TC0ONETIME** 으로 가상 머니 결제로 시연합니다. 카톡 인증·결제 완료까지 실제 흐름과 동일하지만, 실제 카드에서 돈은 빠지지 않습니다. 상용 환경에서는 사업자 등록 후 가맹점 Secret Key로 교체하면 그대로 동작합니다."
+
+> Q: "Secret Key 노출 안 되나요?"
+> A: "본 데모는 테스트 키로 가상 결제만 처리 가능합니다. 상용 배포 시에는 우리 백엔드 서버를 경유해 Secret Key를 클라이언트에 두지 않는 구조로 전환합니다."
+
+#### 데이터 흐름
+```
+[1] 사용자 8016 입력
+[2] Firebase orderByChild("last4").equalTo("8016")
+[3] entry_time, is_paid 확인
+[4] is_paid = true → 바로 안내 시작
+    is_paid = false →
+      [5] 요금 계산
+      [6] 카카오페이 ready API 호출 (Secret Key 사용)
+      [7] next_redirect_mobile_url 받음 → WebView 표시
+      [8] 사용자 카톡 인증 + 결제
+      [9] WebView 콜백 URL 감지 → is_paid = true 업데이트
+      [10] Temi 안내 시작
+```
+
+#### 필요한 라이브러리 (build.gradle)
+```gradle
+// 카카오페이 API 호출은 표준 HttpURLConnection 사용 (별도 SDK 불필요)
+// JSON 파싱: org.json (Android 내장)
+// WebView: android.webkit.WebView (Android 내장)
+```
+
+---
 
 ### 우선순위 1 — 다국어 선택 UI ⭐
 **난이도**: 쉬움 / **예상 시간**: 1시간
@@ -379,6 +449,10 @@ node make_ppt.js
 - ✅ `BatteryData.getLevel()` → `getBatteryPercentage()` 수정 (빌드 실패 해결)
 - ✅ Codex 코드 리뷰 결과 반영
 - ✅ `SESSION_HANDOFF.md` 작성
+- 🎯 **결제 방식 결정**: 카카오페이 테스트 가맹점 `TC0ONETIME` 직접 연동으로 진행
+  - 자체 결제(내차로페이) 옵션은 백업으로 보류
+  - WebView + 카카오페이 ready API + 카톡 인증 흐름
+  - 발표 전 Wi-Fi 안정성 + 카톡 로그인 + 사전 리허설 필수
 
 ### 2026-05-07
 - ✅ Waypoint 대소문자 트러블슈팅 (hex 덤프 디버깅)
