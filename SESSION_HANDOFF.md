@@ -449,10 +449,24 @@ node make_ppt.js
 - ✅ `BatteryData.getLevel()` → `getBatteryPercentage()` 수정 (빌드 실패 해결)
 - ✅ Codex 코드 리뷰 결과 반영
 - ✅ `SESSION_HANDOFF.md` 작성
-- 🎯 **결제 방식 결정**: 카카오페이 테스트 가맹점 `TC0ONETIME` 직접 연동으로 진행
-  - 자체 결제(내차로페이) 옵션은 백업으로 보류
-  - WebView + 카카오페이 ready API + 카톡 인증 흐름
-  - 발표 전 Wi-Fi 안정성 + 카톡 로그인 + 사전 리허설 필수
+- 🎯 **결제 방식 결정**: 카카오페이 테스트 가맹점 `TC0ONETIME` 직접 연동
+- ✅ 카카오페이 WebView 오버레이 + ready API 호출 통합
+- 🎯 **광고/퀴즈/포인트 기능 추가 결정**:
+  - 광고 영상 시청 시 30% 할인 (필수)
+  - 퀴즈 정답 시 +100 포인트 (보너스)
+  - 광고 위치: 결제 전 (MD 원본의 "이동 중" → "결제 전" 으로 변경)
+- ✅ `jinramen_ad.mp4` (5.4MB) `res/raw/` 에 추가
+- ✅ activity_main.xml 6개 화면 구성 추가:
+  1. 메인 (검색)
+  2. 결제 옵션 (지금 결제 vs 광고 보고 할인)
+  3. 광고 영상 재생 (전체화면)
+  4. 퀴즈 화면
+  5. 네비게이션 화면 (이동 중 + 우측 상단 박스)
+  6. 카카오페이 WebView 오버레이
+- ✅ MainActivity 흐름 통합:
+  - searchByLast4 → processVehicleSelection → 결제 옵션 → 광고/퀴즈 → 카카오페이 → 이동 → 자동 복귀 → 메인 복귀
+- ✅ Firebase 결제 정보 저장: `original_fee`, `paid_amount`, `discount_applied`, `quiz_correct`, `paid_at`
+- ✅ 포인트 누적: `users/{plate}/total_points`
 
 ### 2026-05-07
 - ✅ Waypoint 대소문자 트러블슈팅 (hex 덤프 디버깅)
