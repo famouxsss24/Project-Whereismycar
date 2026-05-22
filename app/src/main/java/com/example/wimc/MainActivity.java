@@ -10,8 +10,12 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -33,8 +37,17 @@ import com.robotemi.sdk.TtsRequest;
 import com.robotemi.sdk.listeners.OnGoToLocationStatusChangedListener;
 import com.robotemi.sdk.listeners.OnRobotReadyListener;
 
+import org.json.JSONObject;
+
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
+import java.util.Scanner;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity
@@ -42,22 +55,37 @@ public class MainActivity extends Activity
                    OnGoToLocationStatusChangedListener,
                    Robot.TtsListener {
 
+    // ───── Firebase ─────
     private static final String DB_URL  = "https://wimc-51ff9-default-rtdb.asia-southeast1.firebasedatabase.app";
     private static final String DB_PATH = "parking_lot";
+
+    // ───── 검증 / 타이밍 ─────
     private static final Pattern LAST4_PATTERN = Pattern.compile("^\\d{4}$");
     private static final long NAV_DELAY_MS = 2500;
-    private static final long AUTO_RETURN_DELAY_MS = 15000;   // 안내 도착 후 15초 뒤 자동 복귀
-    private static final int  LOW_BATTERY_THRESHOLD = 30;     // 30% 미만이면 충전 우선
-    private static final String HOME_BASE = "home base";       // Temi 기본 충전소 waypoint
+    private static final long AUTO_RETURN_DELAY_MS = 15000;
+    private static final int  LOW_BATTERY_THRESHOLD = 30;
+    private static final String HOME_BASE = "home base";
 
+    // ───── 결제 ─────
+    private static final int    FEE_PER_10_MIN = 500;
+    private static final String KAKAO_CID = "TC0ONETIME";
+    private static final String KAKAO_SECRET_KEY = "DEV82A2E59C77561B30D980F16DBBF4390B2252A";
+    private static final String KAKAO_READY_URL  = "https://open-api.kakaopay.com/v1/payment/ready";
+
+    // ───── UI ─────
     private EditText etPlateNumber;
     private TextView tvStatus, tvZone, tvSelectLabel;
     private HorizontalScrollView scrollPlates;
     private LinearLayout llPlateImages;
+    private FrameLayout layoutWebViewContainer;
+    private WebView paymentWebView;
 
+    // ───── 상태 ─────
     private Robot robot;
     private DatabaseReference dbRef;
     private boolean isRobotReady = false;
+    private DataSnapshot currentSnapshot = null;
+    private String currentZone = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,6 +98,9 @@ public class MainActivity extends Activity
         tvSelectLabel = findViewById(R.id.tvSelectLabel);
         scrollPlates  = findViewById(R.id.scrollPlates);
         llPlateImages = findViewById(R.id.llPlateImages);
+        layoutWebViewContainer = findViewById(R.id.layoutWebViewContainer);
+        paymentWebView = findViewById(R.id.paymentWebView);
+        initWebView();
 
         try {
             dbRef = FirebaseDatabase.getInstance(DB_URL).getReference(DB_PATH);
@@ -88,6 +119,26 @@ public class MainActivity extends Activity
                 return;
             }
             searchByLast4(last4);
+        });
+    }
+
+    // ─── WebView 초기화 (카카오페이 결제용) ─────────────────────────
+    private void initWebView() {
+        WebSettings webSettings = paymentWebView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        paymentWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (url.contains("payment/success")) {
+                    handlePaymentSuccess();
+                    return true;
+                } else if (url.contains("payment/fail") || url.contains("payment/cancel")) {
+                    handlePaymentFailure();
+                    return true;
+                }
+                return super.shouldOverrideUrlLoading(view, url);
+            }
         });
     }
 
@@ -113,10 +164,9 @@ public class MainActivity extends Activity
         updateStatus(isReady ? "Temi 준비 완료" : "Temi 연결 대기 중...");
     }
 
-    // ─── Firebase 검색 ─────────────────────────────────────────
+    // ─── Firebase 검색 (last4 기준) ─────────────────────────────────
     private void searchByLast4(String last4) {
         if (dbRef == null) { updateStatus("Firebase 미연결"); return; }
-
         resetResultUI();
         updateStatus("'" + last4 + "' 검색 중...");
 
@@ -129,18 +179,16 @@ public class MainActivity extends Activity
                     speak("등록된 차량을 찾을 수 없습니다.");
                     return;
                 }
-
                 List<DataSnapshot> results = new ArrayList<>();
                 for (DataSnapshot child : snapshot.getChildren()) results.add(child);
 
                 if (results.size() == 1) {
-                    navigateToZone(results.get(0));
+                    processVehicleSelection(results.get(0));
                 } else {
                     updateStatus("차량이 " + results.size() + "대 검색됐습니다. 본인 차량을 선택하세요.");
                     showPlateSelection(results);
                 }
             }
-
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
                 updateStatus("Firebase 오류: " + error.getMessage());
@@ -148,25 +196,146 @@ public class MainActivity extends Activity
         });
     }
 
-    // ─── 단일 결과 → 구역 표시 + 이동 ─────────────────────────────
-    private void navigateToZone(DataSnapshot snapshot) {
-        String zone  = snapshot.child("zone").getValue(String.class);
+    // ─── 차량 선택 후 처리 (결제 분기 포함) ───────────────────────
+    private void processVehicleSelection(DataSnapshot snapshot) {
+        currentSnapshot = snapshot;
         String plate = snapshot.getKey();
+        String zone  = snapshot.child("zone").getValue(String.class);
 
         if (zone == null || zone.trim().isEmpty()) {
             updateStatus("구역 정보 없음 — 이동을 중단합니다.");
             speak("구역 정보를 찾을 수 없습니다.");
             return;
         }
+        currentZone = zone;
 
-        tvZone.setText(zone + " 구역");
-        updateStatus(plate + " → " + zone + " 구역으로 이동합니다");
-        speak(zone + " 구역으로 안내해 드리겠습니다.");
+        boolean isPaid = readPaidStatus(snapshot);
+        if (isPaid) {
+            // 이미 결제 완료 → 바로 안내
+            tvZone.setText(zone + " 구역");
+            updateStatus(plate + " → 이미 결제된 차량입니다. 이동합니다.");
+            speak(zone + " 구역으로 안내해 드리겠습니다.");
+            startNavigationAfterDelay(zone);
+            return;
+        }
 
-        startNavigationAfterDelay(zone);
+        // 결제 필요 — 요금 계산
+        String entryTimeStr = snapshot.child("entry_time").getValue(String.class);
+        int fee = calculateParkingFee(entryTimeStr);
+
+        if (fee == 0) {
+            // 무료 시간 또는 entry_time 없음 → 자동 결제 처리 후 안내
+            snapshot.getRef().child("is_paid").setValue(true);
+            tvZone.setText(zone + " 구역");
+            updateStatus(plate + " → 무료 시간입니다. 이동합니다.");
+            speak("무료 주차 시간입니다. " + zone + " 구역으로 안내해 드리겠습니다.");
+            startNavigationAfterDelay(zone);
+        } else {
+            // 결제 필요 → 카카오페이 호출
+            updateStatus("정산 요금: " + String.format("%,d원", fee) + ". 결제를 진행해 주세요.");
+            speak("주차 요금 " + fee + "원 결제가 필요합니다. 화면의 큐알 코드를 스캔해 주세요.");
+            requestKakaoPay(fee, zone);
+        }
     }
 
-    // ─── 공통 이동 메서드 ─────────────────────────────────────────
+    private boolean readPaidStatus(DataSnapshot snapshot) {
+        if (!snapshot.hasChild("is_paid")) return false;
+        Boolean paid = snapshot.child("is_paid").getValue(Boolean.class);
+        return paid != null && paid;
+    }
+
+    // ─── 주차 요금 계산 (10분당 500원, 0분 이하 = 무료) ─────────────
+    private int calculateParkingFee(String entryTimeStr) {
+        if (entryTimeStr == null || entryTimeStr.isEmpty()) return 0;
+        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.KOREA);
+        try {
+            Date entryTime = fmt.parse(entryTimeStr);
+            if (entryTime == null) return 0;
+            long diffMin = (new Date().getTime() - entryTime.getTime()) / (1000 * 60);
+            if (diffMin <= 0) return 0;
+            int intervals = (int) Math.ceil((double) diffMin / 10);
+            return intervals * FEE_PER_10_MIN;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return 0;
+        }
+    }
+
+    // ─── 카카오페이 결제 준비 요청 ─────────────────────────────────
+    private void requestKakaoPay(int amount, String zone) {
+        new Thread(() -> {
+            try {
+                URL url = new URL(KAKAO_READY_URL);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Authorization", "SECRET_KEY " + KAKAO_SECRET_KEY);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+
+                JSONObject params = new JSONObject();
+                params.put("cid", KAKAO_CID);
+                params.put("partner_order_id", "WIMC_" + System.currentTimeMillis());
+                params.put("partner_user_id", "WIMC_CUSTOMER");
+                params.put("item_name", "내차로 주차 정산 (" + zone + " 구역)");
+                params.put("quantity", 1);
+                params.put("total_amount", amount);
+                params.put("tax_free_amount", 0);
+                params.put("approval_url", "https://localhost/payment/success");
+                params.put("cancel_url",   "https://localhost/payment/cancel");
+                params.put("fail_url",     "https://localhost/payment/fail");
+
+                OutputStream os = conn.getOutputStream();
+                os.write(params.toString().getBytes("UTF-8"));
+                os.flush();
+                os.close();
+
+                if (conn.getResponseCode() == 200) {
+                    Scanner s = new Scanner(conn.getInputStream()).useDelimiter("\\A");
+                    String response = s.hasNext() ? s.next() : "";
+                    JSONObject json = new JSONObject(response);
+                    String redirectUrl = json.getString("next_redirect_mobile_url");
+
+                    runOnUiThread(() -> {
+                        layoutWebViewContainer.setVisibility(View.VISIBLE);
+                        paymentWebView.loadUrl(redirectUrl);
+                    });
+                } else {
+                    runOnUiThread(() -> updateStatus("결제 API 응답 오류 (" + conn.getResponseCode() + ")"));
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                runOnUiThread(() -> updateStatus("결제 연동 예외: " + e.getMessage()));
+            }
+        }).start();
+    }
+
+    // ─── 결제 성공 ─────────────────────────────────────────────
+    private void handlePaymentSuccess() {
+        runOnUiThread(() -> {
+            layoutWebViewContainer.setVisibility(View.GONE);
+            paymentWebView.loadUrl("about:blank");
+            updateStatus("결제가 정상 승인되었습니다.");
+
+            if (currentSnapshot != null && currentZone != null) {
+                currentSnapshot.getRef().child("is_paid").setValue(true);
+                tvZone.setText(currentZone + " 구역");
+                speak("결제가 완료되었습니다. " + currentZone + " 구역으로 안내해 드리겠습니다.");
+                startNavigationAfterDelay(currentZone);
+            }
+        });
+    }
+
+    // ─── 결제 실패/취소 ──────────────────────────────────────────
+    private void handlePaymentFailure() {
+        runOnUiThread(() -> {
+            layoutWebViewContainer.setVisibility(View.GONE);
+            paymentWebView.loadUrl("about:blank");
+            updateStatus("결제가 취소되었거나 실패했습니다.");
+            speak("결제가 정상 처리되지 않았습니다. 다시 시도해 주세요.");
+        });
+    }
+
+    // ─── 공통 이동 (waypoint 소문자 정규화) ─────────────────────────
     private void startNavigationAfterDelay(String zone) {
         if (zone == null || zone.trim().isEmpty()) {
             updateStatus("이동할 구역 정보가 없습니다.");
@@ -176,20 +345,19 @@ public class MainActivity extends Activity
             updateStatus("Temi가 아직 준비되지 않았습니다.");
             return;
         }
-        // Temi waypoint 이름은 내부적으로 소문자로 저장됨
+        // Temi 내부 waypoint는 소문자로 저장됨 — 매칭을 위해 정규화
         final String target = zone.trim().toLowerCase();
         new Handler(Looper.getMainLooper()).postDelayed(
                 () -> robot.goTo(target), NAV_DELAY_MS);
     }
 
-    // ─── 중복 결과 → 번호판 이미지 카드 표시 ───────────────────────
+    // ─── 중복 차량 카드 표시 ──────────────────────────────────────
     private void showPlateSelection(List<DataSnapshot> results) {
         runOnUiThread(() -> {
             tvZone.setVisibility(View.GONE);
             tvSelectLabel.setVisibility(View.VISIBLE);
             scrollPlates.setVisibility(View.VISIBLE);
             llPlateImages.removeAllViews();
-
             for (DataSnapshot snap : results) {
                 llPlateImages.addView(buildPlateCard(snap));
             }
@@ -200,7 +368,6 @@ public class MainActivity extends Activity
         String imageUrl = snap.child("image_url").getValue(String.class);
         String plate    = snap.getKey();
 
-        // 카드 컨테이너
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
@@ -210,7 +377,6 @@ public class MainActivity extends Activity
         lp.setMargins(28, 0, 28, 0);
         card.setLayoutParams(lp);
 
-        // 번호판 이미지 (번호판 실제 비율 4:1 근사)
         ImageView iv = new ImageView(this);
         iv.setLayoutParams(new LinearLayout.LayoutParams(500, 160));
         iv.setBackgroundColor(Color.WHITE);
@@ -220,7 +386,6 @@ public class MainActivity extends Activity
         }
         card.addView(iv);
 
-        // 번호판 텍스트
         TextView tv = new TextView(this);
         tv.setText(plate);
         tv.setTextColor(Color.WHITE);
@@ -229,15 +394,13 @@ public class MainActivity extends Activity
         tv.setGravity(Gravity.CENTER);
         card.addView(tv);
 
-        // 클릭 시 해당 차량 구역으로 이동
         card.setOnClickListener(v -> {
             resetResultUI();
-            navigateToZone(snap);
+            processVehicleSelection(snap);
         });
         return card;
     }
 
-    // ─── UI 초기화 ─────────────────────────────────────────────
     private void resetResultUI() {
         runOnUiThread(() -> {
             tvZone.setText("");
@@ -248,7 +411,7 @@ public class MainActivity extends Activity
         });
     }
 
-    // ─── Temi 이동 상태 콜백 ───────────────────────────────────
+    // ─── Temi 이동 상태 콜백 ──────────────────────────────────────
     @Override
     public void onGoToLocationStatusChanged(@NonNull String location, @NonNull String status,
                                              int descriptionId, @NonNull String description) {
@@ -259,7 +422,6 @@ public class MainActivity extends Activity
             case OnGoToLocationStatusChangedListener.COMPLETE:
                 updateStatus(location + " 구역 도착!");
                 speak(location + " 구역에 도착했습니다. 안전 운전 하세요.");
-                // 사용자 차량 도달 후 일정 시간 뒤 자동 복귀
                 if (!HOME_BASE.equalsIgnoreCase(location)) {
                     scheduleAutoReturn();
                 }
