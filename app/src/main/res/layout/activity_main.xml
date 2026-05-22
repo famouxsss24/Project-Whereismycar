@@ -4,8 +4,9 @@
     android:layout_height="match_parent"
     android:background="#1A1A2E">
 
-    <!-- ───────── 메인 콘텐츠 ───────── -->
+    <!-- ═══════════════ 1) 메인 화면 (검색) ═══════════════ -->
     <LinearLayout
+        android:id="@+id/mainLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
@@ -110,7 +111,303 @@
 
     </LinearLayout>
 
-    <!-- ───────── 카카오페이 WebView 오버레이 (기본 숨김) ───────── -->
+    <!-- ═══════════════ 2) 결제 옵션 선택 화면 ═══════════════ -->
+    <LinearLayout
+        android:id="@+id/paymentOptionLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="48dp"
+        android:background="#1A1A2E"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="결제 안내"
+            android:textSize="44sp"
+            android:textStyle="bold"
+            android:textColor="#E94560"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="40dp"/>
+
+        <!-- 요금 정보 카드 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#2A2A3E"
+            android:padding="32dp"
+            android:layout_marginBottom="32dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="차량 번호"
+                    android:textSize="22sp"
+                    android:textColor="#AAAAAA"/>
+                <TextView
+                    android:id="@+id/tvPaymentPlate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="-"
+                    android:textSize="22sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="주차 시간"
+                    android:textSize="22sp"
+                    android:textColor="#AAAAAA"/>
+                <TextView
+                    android:id="@+id/tvParkingTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="-"
+                    android:textSize="22sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="정산 요금"
+                    android:textSize="22sp"
+                    android:textColor="#AAAAAA"/>
+                <TextView
+                    android:id="@+id/tvOriginalFee"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="-"
+                    android:textSize="28sp"
+                    android:textColor="#E94560"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 광고 안내 배너 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="💡  광고 시청 시 30% 할인 + 포인트 적립"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#FFD700"
+            android:gravity="center"
+            android:padding="16dp"
+            android:background="#3A2A1A"
+            android:layout_marginBottom="32dp"/>
+
+        <!-- 결제 옵션 버튼 -->
+        <Button
+            android:id="@+id/btnPayDirect"
+            android:layout_width="match_parent"
+            android:layout_height="84dp"
+            android:text="지금 결제"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#555555"
+            android:layout_marginBottom="16dp"/>
+
+        <Button
+            android:id="@+id/btnPayWithAd"
+            android:layout_width="match_parent"
+            android:layout_height="100dp"
+            android:text="광고 보고 30% 할인받기"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#E94560"/>
+
+    </LinearLayout>
+
+    <!-- ═══════════════ 3) 광고 영상 재생 (전체 화면) ═══════════════ -->
+    <FrameLayout
+        android:id="@+id/adLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <VideoView
+            android:id="@+id/videoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="광고 시청 중 (스킵 불가)"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:background="#80000000"
+            android:padding="8dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="16dp"/>
+
+    </FrameLayout>
+
+    <!-- ═══════════════ 4) 퀴즈 화면 ═══════════════ -->
+    <LinearLayout
+        android:id="@+id/quizLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="48dp"
+        android:background="#1A1A2E"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🎯 광고 퀴즈"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:textColor="#FFD700"
+            android:layout_marginBottom="20dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="정답 시 +100 포인트"
+            android:textSize="18sp"
+            android:textColor="#AAAAAA"
+            android:layout_marginBottom="40dp"/>
+
+        <TextView
+            android:id="@+id/quizQuestion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="류현진이 먹은 라면은?"
+            android:textSize="36sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:gravity="center"
+            android:layout_marginBottom="60dp"/>
+
+        <Button
+            android:id="@+id/btnAnswer1"
+            android:layout_width="match_parent"
+            android:layout_height="80dp"
+            android:text="신라면"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2A2A3E"
+            android:layout_marginBottom="20dp"/>
+
+        <Button
+            android:id="@+id/btnAnswer2"
+            android:layout_width="match_parent"
+            android:layout_height="80dp"
+            android:text="진라면"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2A2A3E"/>
+
+    </LinearLayout>
+
+    <!-- ═══════════════ 5) Temi 이동 중 화면 (네비게이션) ═══════════════ -->
+    <FrameLayout
+        android:id="@+id/navLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#1A1A2E"
+        android:visibility="gone">
+
+        <!-- 중앙: 안내 상태 큰 글씨 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="48dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🚗"
+                android:textSize="100sp"
+                android:layout_marginBottom="24dp"/>
+
+            <TextView
+                android:id="@+id/tvNavZone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="80sp"
+                android:textStyle="bold"
+                android:textColor="#E94560"
+                android:layout_marginBottom="20dp"/>
+
+            <TextView
+                android:id="@+id/tvNavStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="안내 중..."
+                android:textSize="24sp"
+                android:textColor="#FFFFFF"/>
+        </LinearLayout>
+
+        <!-- 우측 상단: 작은 네비게이션 박스 -->
+        <LinearLayout
+            android:id="@+id/navigationBox"
+            android:layout_width="220dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="20dp"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="#CC2A2A3E">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="📍 NAVIGATION"
+                android:textColor="#FFD700"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="10dp"/>
+
+            <TextView
+                android:id="@+id/navInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="목적지: -\n상태: 대기 중\n방향: -"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:lineSpacingExtra="4dp"/>
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- ═══════════════ 6) 카카오페이 WebView 오버레이 ═══════════════ -->
     <FrameLayout
         android:id="@+id/layoutWebViewContainer"
         android:layout_width="match_parent"
