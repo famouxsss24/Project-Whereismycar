@@ -75,7 +75,7 @@ public class MainActivity extends Activity
     private static final String CORRECT_ANSWER = "진라면";
     private static final String KAKAO_CID = "TC0ONETIME";
     private static final String KAKAO_SECRET_KEY = "DEV82A2E59C77561B30D980F16DBBF4390B2252A";
-    private static final String KAKAO_READY_URL  = "https://open-api.kakaopay.com/v1/payment/ready";
+    private static final String KAKAO_READY_URL  = "https://open-api.kakaopay.com/online/v1/payment/ready";
 
     // ───── UI: 메인 ─────
     private LinearLayout mainLayout;
@@ -466,7 +466,8 @@ public class MainActivity extends Activity
                 os.flush();
                 os.close();
 
-                if (conn.getResponseCode() == 200) {
+                int responseCode = conn.getResponseCode();
+                if (responseCode == 200) {
                     Scanner s = new Scanner(conn.getInputStream()).useDelimiter("\\A");
                     String response = s.hasNext() ? s.next() : "";
                     JSONObject json = new JSONObject(response);
@@ -477,7 +478,7 @@ public class MainActivity extends Activity
                         paymentWebView.loadUrl(redirectUrl);
                     });
                 } else {
-                    runOnUiThread(() -> updateStatus("결제 API 응답 오류 (" + conn.getResponseCode() + ")"));
+                    runOnUiThread(() -> updateStatus("결제 API 응답 오류 (" + responseCode + ")"));
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -686,7 +687,11 @@ public class MainActivity extends Activity
     public void onTtsStatusChanged(@NonNull TtsRequest ttsRequest) {}
 
     private void speak(String text) {
-        robot.speak(TtsRequest.create(text, false));
+        try {
+            if (robot != null) robot.speak(TtsRequest.create(text, false));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void updateStatus(String msg) {
