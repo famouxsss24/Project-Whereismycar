@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 
 import numpy as np
@@ -21,9 +22,9 @@ class ParkingLotProcessor:
         yolo_image_size: int = 640,
         allow_yolo_fallback: bool = True,
     ) -> None:
-        self._custom_section_boxes = tuple(section_boxes or [])
-        self.section_count = len(self._custom_section_boxes) if self._custom_section_boxes else section_count
-        self.layout = "custom" if self._custom_section_boxes else layout
+        self._custom_section_boxes = None if section_boxes is None else tuple(section_boxes)
+        self.section_count = len(self._custom_section_boxes) if self._custom_section_boxes is not None else section_count
+        self.layout = "custom" if self._custom_section_boxes is not None else layout
         self.reader = PlateReader()
         self.detector = create_plate_detector(
             detector_name=detector_name,
@@ -32,11 +33,26 @@ class ParkingLotProcessor:
             yolo_image_size=yolo_image_size,
         )
         self.fallback_detector = HeuristicPlateDetector() if detector_name == "yolo" and allow_yolo_fallback else None
-        self._section_cache: dict[tuple[tuple[int, ...], int, str, tuple[tuple[int, int, int, int], ...]], list[SectionSpec]] = {}
+        self._section_cache: dict[
+            tuple[tuple[int, ...], int, str, tuple[tuple[int, int, int, int], ...] | None],
+            list[SectionSpec],
+        ] = {}
+        self._section_lock = threading.RLock()
 
     @property
     def detector_name(self) -> str:
         return self.detector.name
+
+    def uses_custom_section_boxes(self) -> bool:
+        with self._section_lock:
+            return self._custom_section_boxes is not None
+
+    def set_section_boxes(self, section_boxes: list[tuple[int, int, int, int]] | tuple[tuple[int, int, int, int], ...]) -> None:
+        with self._section_lock:
+            self._custom_section_boxes = tuple(section_boxes)
+            self.section_count = len(self._custom_section_boxes)
+            self.layout = "custom"
+            self._section_cache.clear()
 
     def _build_custom_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
         height, width = image_shape[:2]
@@ -56,13 +72,14 @@ class ParkingLotProcessor:
         return specs
 
     def get_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
-        cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes)
-        if cache_key not in self._section_cache:
-            if self._custom_section_boxes:
-                self._section_cache[cache_key] = self._build_custom_section_specs(image_shape)
-            else:
-                self._section_cache[cache_key] = divide_into_sections(image_shape, self.section_count, self.layout)
-        return self._section_cache[cache_key]
+        with self._section_lock:
+            cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes)
+            if cache_key not in self._section_cache:
+                if self._custom_section_boxes is not None:
+                    self._section_cache[cache_key] = self._build_custom_section_specs(image_shape)
+                else:
+                    self._section_cache[cache_key] = divide_into_sections(image_shape, self.section_count, self.layout)
+            return self._section_cache[cache_key]
 
     def _read_plate_candidate(self, candidate_image: np.ndarray):
         primary = self.reader.read_plate_from_image(candidate_image)
@@ -142,6 +159,10 @@ class ParkingLotProcessor:
         if self.fallback_detector is None:
             return None
 
+        if self.uses_custom_section_boxes():
+            x1, y1, x2, y2 = spec.box
+            return self.fallback_detector.detect(frame[y1:y2, x1:x2])
+
         ex1, ey1, ex2, ey2 = expand_box(spec.box, frame.shape, margin_ratio=0.18)
         expanded_image = frame[ey1:ey2, ex1:ex2]
         fallback_candidate = self.fallback_detector.detect(expanded_image)
@@ -176,7 +197,7 @@ class ParkingLotProcessor:
     def process_frame(self, frame: np.ndarray, source_kind: str, source_value: str) -> ProcessedFrameAnalysis:
         sections = self.get_section_specs(frame.shape)
         detect_sections = getattr(self.detector, "detect_sections", None)
-        use_batch_detection = callable(detect_sections)
+        use_batch_detection = callable(detect_sections) and not self.uses_custom_section_boxes()
         yolo_candidates = detect_sections(frame, sections) if use_batch_detection else {}
 
         processed_sections = []

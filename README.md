@@ -74,10 +74,61 @@ Single capture:
 python main.py --webcam --camera 0 --detector yolo --preview --pretty
 ```
 
+Multiple cameras:
+
+```bash
+python main.py --webcam --preview --camera 0 --camera 1 --detector yolo --pretty
+```
+
+Or with a comma-separated list:
+
+```bash
+python main.py --webcam --preview --cameras 0,1 --detector yolo --pretty
+```
+
 Continuous loop:
 
 ```bash
 python main.py --webcam --loop --interval 1.0 --detector yolo
+```
+
+Settings can use either the existing single-camera form:
+
+```json
+{
+  "camera": 0
+}
+```
+
+Or multiple cameras:
+
+```json
+{
+  "cameras": [0, 1]
+}
+```
+
+## Live Scan Area Selection
+
+In preview mode, OCR runs only inside the active scan rectangles shown on the camera frame.
+
+- Drag with the mouse in a preview window to select a scan area.
+- The first drag replaces the configured/default areas for that camera.
+- Additional drags add more scan areas for that camera.
+- Scan areas are saved automatically to `camera_section_boxes` in `settings.json`.
+- Press `c` to clear scan areas.
+- Press `r` to restore the configured/default areas.
+- Press `q` or `Esc` to exit.
+
+Saved multi-camera scan areas look like this:
+
+```json
+{
+  "camera_section_boxes": {
+    "0": [{"x": 20, "y": 120, "width": 180, "height": 180}],
+    "1": [{"x": 30, "y": 100, "width": 220, "height": 160}]
+  }
+}
 ```
 
 ## Optional HTTP Output

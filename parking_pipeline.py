@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -20,10 +21,10 @@ from plate_publish import (
     normalize_firebase_database_url,
     resolve_project_id_from_service_account,
 )
-from parking_types import ProcessedFrameResult
-from plate_detection import resolve_default_yolo_model
+from parking_types import Box, ProcessedFrameAnalysis
+from plate_detection import divide_into_sections, resolve_default_yolo_model
 from plate_ocr import load_image
-from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, draw_crop_debug_window, draw_preview_frame
+from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, ScanAreaSelector, draw_crop_debug_window, draw_preview_frame
 
 
 DEFAULT_SETTINGS_PATH = Path("settings.json")
@@ -83,6 +84,36 @@ def parse_section_boxes(raw_boxes: list[str] | None) -> list[tuple[int, int, int
     return [parse_section_box_argument(raw_value) for raw_value in raw_boxes]
 
 
+def parse_camera_list_argument(value: str) -> list[int]:
+    indexes: list[int] = []
+    for part in value.split(","):
+        stripped = part.strip()
+        if not stripped:
+            continue
+        try:
+            index = int(stripped)
+        except ValueError as exc:
+            raise ValueError(f"Camera index must be an integer: {stripped!r}") from exc
+        if index < 0:
+            raise ValueError(f"Camera index must be >= 0: {index}")
+        indexes.append(index)
+    if not indexes:
+        raise ValueError("At least one camera index is required.")
+    return indexes
+
+
+def dedupe_camera_indexes(indexes: list[int]) -> list[int]:
+    deduped: list[int] = []
+    for index in indexes:
+        if index not in deduped:
+            deduped.append(index)
+    return deduped
+
+
+def cli_has_option(argv: list[str], option_name: str) -> bool:
+    return any(item == option_name or item.startswith(f"{option_name}=") for item in argv)
+
+
 def resolve_settings_path(argv: list[str]) -> Path:
     bootstrap = argparse.ArgumentParser(add_help=False)
     bootstrap.add_argument("--settings", default=str(DEFAULT_SETTINGS_PATH))
@@ -102,6 +133,20 @@ def _as_int(value: object, key: str) -> int:
     return value
 
 
+def _as_int_list(value: object, key: str) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError(f"Setting `{key}` must be a list of integers.")
+    indexes = []
+    for item in value:
+        indexes.append(_as_int(item, key))
+    if not indexes:
+        raise ValueError(f"Setting `{key}` must include at least one camera index.")
+    for index in indexes:
+        if index < 0:
+            raise ValueError(f"Setting `{key}` camera indexes must be >= 0.")
+    return dedupe_camera_indexes(indexes)
+
+
 def _as_float(value: object, key: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Setting `{key}` must be a number.")
@@ -116,11 +161,11 @@ def _as_optional_str(value: object, key: str) -> str | None:
     raise ValueError(f"Setting `{key}` must be a string or null.")
 
 
-def _normalize_section_box_settings(value: object) -> list[str]:
+def _normalize_section_box_settings(value: object, key: str = "section_boxes") -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ValueError("Setting `section_boxes` must be a list.")
+        raise ValueError(f"Setting `{key}` must be a list.")
 
     normalized: list[str] = []
     for index, item in enumerate(value):
@@ -130,14 +175,14 @@ def _normalize_section_box_settings(value: object) -> list[str]:
         if isinstance(item, dict):
             missing = [key for key in ("x", "y", "width", "height") if key not in item]
             if missing:
-                raise ValueError(f"section_boxes[{index}] is missing keys: {', '.join(missing)}")
+                raise ValueError(f"{key}[{index}] is missing keys: {', '.join(missing)}")
             try:
                 x = int(item["x"])
                 y = int(item["y"])
                 width = int(item["width"])
                 height = int(item["height"])
             except Exception as exc:
-                raise ValueError(f"section_boxes[{index}] contains non-integer values.") from exc
+                raise ValueError(f"{key}[{index}] contains non-integer values.") from exc
             normalized.append(f"{x},{y},{width},{height}")
             continue
         if isinstance(item, (list, tuple)) and len(item) == 4:
@@ -147,13 +192,44 @@ def _normalize_section_box_settings(value: object) -> list[str]:
                 width = int(item[2])
                 height = int(item[3])
             except Exception as exc:
-                raise ValueError(f"section_boxes[{index}] contains non-integer values.") from exc
+                raise ValueError(f"{key}[{index}] contains non-integer values.") from exc
             normalized.append(f"{x},{y},{width},{height}")
             continue
         raise ValueError(
-            f"section_boxes[{index}] must be string, object(x,y,width,height), or [x,y,width,height]."
+            f"{key}[{index}] must be string, object(x,y,width,height), or [x,y,width,height]."
         )
     return normalized
+
+
+def _normalize_camera_section_box_settings(value: object) -> dict[int, list[str]]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("Setting `camera_section_boxes` must be an object keyed by camera index.")
+
+    normalized: dict[int, list[str]] = {}
+    for raw_camera_index, raw_boxes in value.items():
+        try:
+            camera_index = int(raw_camera_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"camera_section_boxes key must be a camera index: {raw_camera_index!r}") from exc
+        if camera_index < 0:
+            raise ValueError("camera_section_boxes keys must be >= 0.")
+        normalized[camera_index] = _normalize_section_box_settings(
+            raw_boxes,
+            f"camera_section_boxes[{camera_index}]",
+        )
+    return normalized
+
+
+def box_to_settings_entry(box: Box) -> dict[str, int]:
+    x1, y1, x2, y2 = box
+    return {
+        "x": int(x1),
+        "y": int(y1),
+        "width": int(x2 - x1),
+        "height": int(y2 - y1),
+    }
 
 
 def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str, object]:
@@ -174,12 +250,23 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         defaults["image_path"] = _as_optional_str(raw_settings["image_path"], "image_path")
     if "webcam" in raw_settings:
         defaults["webcam"] = _as_bool(raw_settings["webcam"], "webcam")
-    if "camera" in raw_settings:
-        defaults["camera"] = _as_int(raw_settings["camera"], "camera")
+    if not cli_has_option(cli_argv, "--camera") and not cli_has_option(cli_argv, "--cameras"):
+        if "cameras" in raw_settings:
+            defaults["camera"] = _as_int_list(raw_settings["cameras"], "cameras")
+        elif "camera" in raw_settings:
+            camera_index = _as_int(raw_settings["camera"], "camera")
+            if camera_index < 0:
+                raise ValueError("Setting `camera` must be >= 0.")
+            defaults["camera"] = [camera_index]
     if "sections" in raw_settings:
         defaults["sections"] = _as_int(raw_settings["sections"], "sections")
-    if "--section-box" not in cli_argv and "section_boxes" in raw_settings:
-        defaults["section_box"] = _normalize_section_box_settings(raw_settings["section_boxes"])
+    if "--section-box" not in cli_argv:
+        if "section_boxes" in raw_settings:
+            defaults["section_box"] = _normalize_section_box_settings(raw_settings["section_boxes"])
+        if "camera_section_boxes" in raw_settings:
+            defaults["camera_section_boxes"] = _normalize_camera_section_box_settings(
+                raw_settings["camera_section_boxes"]
+            )
     if "detector" in raw_settings:
         detector = _as_optional_str(raw_settings["detector"], "detector")
         if detector not in ("heuristic", "yolo"):
@@ -254,13 +341,13 @@ def process_webcam_frame(
     camera_index: int,
     dispatcher: PlateUpdateDispatcher,
     pretty: bool,
-) -> ProcessedFrameResult:
+) -> ProcessedFrameAnalysis:
     analysis = processor.process_frame(frame, "webcam", str(camera_index))
     try:
         dispatcher.emit(analysis, pretty)
     except Exception as exc:  # pragma: no cover - live preview path
         print(f"Publish error: {exc}", file=sys.stderr)
-    return ProcessedFrameResult(frame=frame, analysis=analysis)
+    return analysis
 
 
 def load_azure_secrets(path_value: str | None) -> dict[str, object]:
@@ -296,7 +383,17 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
     )
     parser.add_argument("image_path", nargs="?", help="Path to an image to process.")
     parser.add_argument("--webcam", action="store_true", help="Capture frames from a webcam instead of an image.")
-    parser.add_argument("--camera", type=int, default=0, help="Webcam index. Default: 0.")
+    parser.add_argument(
+        "--camera",
+        type=int,
+        action="append",
+        default=[],
+        help="Webcam index. Repeat for multiple cameras. Default: 0.",
+    )
+    parser.add_argument(
+        "--cameras",
+        help="Comma-separated webcam indexes, for example 0,1. Overrides --camera.",
+    )
     parser.add_argument("--sections", type=int, default=3, help="Number of parking sections. Default: 3.")
     parser.add_argument(
         "--section-box",
@@ -466,97 +563,282 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
     )
 
 
-def run_once(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
+def resolve_camera_indexes(args: argparse.Namespace) -> list[int]:
+    if args.cameras:
+        return dedupe_camera_indexes(parse_camera_list_argument(args.cameras))
+    indexes = dedupe_camera_indexes(list(args.camera or []))
+    if not indexes:
+        indexes = [0]
+    for index in indexes:
+        if index < 0:
+            raise ValueError("Camera indexes must be >= 0.")
+    return indexes
+
+
+def build_processor(
+    args: argparse.Namespace,
+    section_boxes: list[Box] | None,
+    resolved_yolo_model: str | None,
+) -> ParkingLotProcessor:
+    return ParkingLotProcessor(
+        section_count=args.sections,
+        layout=args.layout,
+        section_boxes=section_boxes,
+        detector_name=args.detector,
+        yolo_model_path=resolved_yolo_model,
+        yolo_confidence=args.yolo_conf,
+        yolo_image_size=args.yolo_imgsz,
+        allow_yolo_fallback=not args.yolo_only,
+    )
+
+
+def build_processors(
+    args: argparse.Namespace,
+    section_boxes_by_camera: dict[int, list[Box] | None],
+    resolved_yolo_model: str | None,
+    camera_indexes: list[int],
+) -> dict[int, ParkingLotProcessor]:
+    return {
+        camera_index: build_processor(args, section_boxes_by_camera.get(camera_index), resolved_yolo_model)
+        for camera_index in camera_indexes
+    }
+
+
+def open_cameras(camera_indexes: list[int]) -> dict[int, cv2.VideoCapture]:
+    captures: dict[int, cv2.VideoCapture] = {}
+    try:
+        for camera_index in camera_indexes:
+            captures[camera_index] = open_camera(camera_index)
+        return captures
+    except Exception:
+        for capture in captures.values():
+            capture.release()
+        raise
+
+
+def parse_camera_section_boxes(raw_boxes: dict[int, list[str]] | None) -> dict[int, list[Box]]:
+    if not raw_boxes:
+        return {}
+    return {
+        camera_index: parse_section_boxes(camera_boxes)
+        for camera_index, camera_boxes in raw_boxes.items()
+    }
+
+
+def resolve_configured_section_boxes(
+    args: argparse.Namespace,
+    camera_indexes: list[int],
+    cli_section_box_override: bool,
+) -> dict[int, list[Box] | None]:
+    global_section_boxes = parse_section_boxes(args.section_box)
+    camera_section_boxes = parse_camera_section_boxes(getattr(args, "camera_section_boxes", None))
+
+    configured: dict[int, list[Box] | None] = {}
+    for camera_index in camera_indexes:
+        if args.webcam and not cli_section_box_override and camera_index in camera_section_boxes:
+            configured[camera_index] = camera_section_boxes[camera_index]
+            continue
+        configured[camera_index] = global_section_boxes if global_section_boxes else None
+    return configured
+
+
+def save_camera_section_boxes(settings_path: Path, camera_index: int, boxes: list[Box]) -> None:
+    settings: dict[str, object] = {}
+    if settings_path.exists():
+        with settings_path.open("r", encoding="utf-8") as settings_file:
+            raw_settings = json.load(settings_file)
+        if isinstance(raw_settings, dict):
+            settings = raw_settings
+
+    raw_camera_boxes = settings.get("camera_section_boxes")
+    camera_boxes = raw_camera_boxes if isinstance(raw_camera_boxes, dict) else {}
+    camera_boxes[str(camera_index)] = [box_to_settings_entry(box) for box in boxes]
+    settings["camera_section_boxes"] = camera_boxes
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    with settings_path.open("w", encoding="utf-8") as settings_file:
+        json.dump(settings, settings_file, ensure_ascii=False, indent=2)
+        settings_file.write("\n")
+
+
+def run_once(
+    args: argparse.Namespace,
+    processors: dict[int, ParkingLotProcessor],
+    dispatcher: PlateUpdateDispatcher,
+    camera_indexes: list[int],
+) -> int:
     if args.webcam:
-        frame = capture_webcam_frame(args.camera)
-        analysis = processor.process_frame(frame, "webcam", str(args.camera))
+        for camera_index in camera_indexes:
+            frame = capture_webcam_frame(camera_index)
+            analysis = processors[camera_index].process_frame(frame, "webcam", str(camera_index))
+            dispatcher.emit(analysis, args.pretty)
+        return 0
     else:
         image_path = Path(args.image_path)
         if not image_path.exists():
             print(f"Image not found: {image_path}", file=sys.stderr)
             return 1
+        processor = processors[camera_indexes[0]]
         analysis = processor.process_frame(load_image(image_path), "image", str(image_path))
 
     dispatcher.emit(analysis, args.pretty)
     return 0
 
 
-def run_loop(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
-    capture = open_camera(args.camera)
+def run_loop(
+    args: argparse.Namespace,
+    processors: dict[int, ParkingLotProcessor],
+    dispatcher: PlateUpdateDispatcher,
+    camera_indexes: list[int],
+) -> int:
+    captures = open_cameras(camera_indexes)
     try:
         while True:
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                raise RuntimeError("Unable to read a frame from the webcam.")
-            analysis = processor.process_frame(frame, "webcam", str(args.camera))
-            dispatcher.emit(analysis, args.pretty)
-            time.sleep(args.interval)
-    finally:
-        capture.release()
-
-
-def run_preview_loop(args: argparse.Namespace, processor: ParkingLotProcessor, dispatcher: PlateUpdateDispatcher) -> int:
-    capture = open_camera(args.camera)
-    latest_result: ProcessedFrameResult | None = None
-    latest_error: str | None = None
-    last_completed_at: float | None = None
-    last_submission_at = 0.0
-    pending_frame: np.ndarray | None = None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        pending: concurrent.futures.Future[ProcessedFrameResult] | None = None
-        try:
-            while True:
+            for camera_index, capture in captures.items():
                 ok, frame = capture.read()
                 if not ok or frame is None:
-                    raise RuntimeError("Unable to read a frame from the webcam.")
+                    raise RuntimeError(f"Unable to read a frame from webcam index {camera_index}.")
+                analysis = processors[camera_index].process_frame(frame, "webcam", str(camera_index))
+                dispatcher.emit(analysis, args.pretty)
+            time.sleep(args.interval)
+    finally:
+        for capture in captures.values():
+            capture.release()
 
+
+@dataclass
+class PreviewCameraState:
+    processor: ParkingLotProcessor
+    selector: ScanAreaSelector
+    window_name: str
+    crop_window_name: str
+    latest_analysis: ProcessedFrameAnalysis | None = None
+    latest_error: str | None = None
+    last_completed_at: float | None = None
+    last_submission_at: float = 0.0
+    pending: concurrent.futures.Future[ProcessedFrameAnalysis] | None = None
+    selector_initialized: bool = False
+
+
+def preview_window_name(base_name: str, camera_index: int, multi_camera: bool) -> str:
+    return f"{base_name} - Camera {camera_index}" if multi_camera else base_name
+
+
+def initial_scan_boxes(
+    args: argparse.Namespace,
+    configured_section_boxes: list[Box] | None,
+    frame_shape: tuple[int, ...],
+) -> list[Box]:
+    if configured_section_boxes is not None:
+        return list(configured_section_boxes)
+    return [spec.box for spec in divide_into_sections(frame_shape, args.sections, args.layout)]
+
+
+def run_preview_loop(
+    args: argparse.Namespace,
+    processors: dict[int, ParkingLotProcessor],
+    dispatcher: PlateUpdateDispatcher,
+    camera_indexes: list[int],
+    configured_section_boxes_by_camera: dict[int, list[Box] | None],
+    settings_path: Path,
+) -> int:
+    captures = open_cameras(camera_indexes)
+    multi_camera = len(camera_indexes) > 1
+    states: dict[int, PreviewCameraState] = {}
+
+    for camera_index in camera_indexes:
+        selector = ScanAreaSelector()
+        window_name = preview_window_name(WINDOW_NAME, camera_index, multi_camera)
+        crop_window_name = preview_window_name(CROP_WINDOW_NAME, camera_index, multi_camera)
+        cv2.namedWindow(window_name)
+        cv2.setMouseCallback(window_name, selector.mouse_callback)
+        states[camera_index] = PreviewCameraState(
+            processor=processors[camera_index],
+            selector=selector,
+            window_name=window_name,
+            crop_window_name=crop_window_name,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(camera_indexes))) as executor:
+        try:
+            while True:
                 now = time.monotonic()
-                if pending is not None and pending.done():
-                    try:
-                        latest_result = pending.result()
-                        latest_error = None
-                        last_completed_at = now
-                    except Exception as exc:  # pragma: no cover - live preview path
-                        latest_error = str(exc)
-                    pending = None
-                    pending_frame = None
+                for camera_index, capture in captures.items():
+                    state = states[camera_index]
+                    ok, frame = capture.read()
+                    if not ok or frame is None:
+                        raise RuntimeError(f"Unable to read a frame from webcam index {camera_index}.")
 
-                if pending is None and now - last_submission_at >= args.interval:
-                    pending_frame = frame.copy()
-                    pending = executor.submit(
-                        process_webcam_frame,
-                        processor,
-                        pending_frame,
-                        args.camera,
-                        dispatcher,
-                        args.pretty,
+                    state.selector.set_frame_shape(frame.shape)
+                    if not state.selector_initialized:
+                        state.selector.set_initial_boxes(
+                            initial_scan_boxes(
+                                args,
+                                configured_section_boxes_by_camera.get(camera_index),
+                                frame.shape,
+                            )
+                        )
+                        state.selector_initialized = True
+
+                    if state.selector.consume_changed():
+                        state.processor.set_section_boxes(state.selector.boxes)
+                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
+
+                    if state.pending is not None and state.pending.done():
+                        try:
+                            state.latest_analysis = state.pending.result()
+                            state.latest_error = None
+                            state.last_completed_at = now
+                        except Exception as exc:  # pragma: no cover - live preview path
+                            state.latest_error = str(exc)
+                        state.pending = None
+
+                    if state.pending is None and now - state.last_submission_at >= args.interval:
+                        state.pending = executor.submit(
+                            process_webcam_frame,
+                            state.processor,
+                            frame.copy(),
+                            camera_index,
+                            dispatcher,
+                            args.pretty,
+                        )
+                        state.last_submission_at = now
+
+                    section_specs = state.processor.get_section_specs(frame.shape)
+                    latest_analysis = state.latest_analysis
+                    latest_payload = latest_analysis.payload if latest_analysis is not None else None
+                    display = draw_preview_frame(
+                        frame=frame,
+                        section_specs=section_specs,
+                        payload=latest_payload,
+                        pending=state.pending is not None,
+                        last_completed_at=None if state.last_completed_at is None else now - state.last_completed_at,
+                        latest_error=state.latest_error,
+                        draft_box=state.selector.draft_box,
                     )
-                    last_submission_at = now
-
-                section_specs = processor.get_section_specs(frame.shape)
-                latest_analysis = latest_result.analysis if latest_result is not None else None
-                latest_payload = latest_analysis.payload if latest_analysis is not None else None
-                display = draw_preview_frame(
-                    frame=frame,
-                    section_specs=section_specs,
-                    payload=latest_payload,
-                    pending=pending is not None,
-                    last_completed_at=None if last_completed_at is None else now - last_completed_at,
-                    latest_error=latest_error,
-                )
-                crop_debug_display = draw_crop_debug_window(
-                    processed_sections=latest_analysis.sections if latest_analysis is not None else [],
-                    section_specs=section_specs,
-                )
-                cv2.imshow(WINDOW_NAME, display)
-                cv2.imshow(CROP_WINDOW_NAME, crop_debug_display)
+                    crop_debug_display = draw_crop_debug_window(
+                        processed_sections=latest_analysis.sections if latest_analysis is not None else [],
+                        section_specs=section_specs,
+                    )
+                    cv2.imshow(state.window_name, display)
+                    cv2.imshow(state.crop_window_name, crop_debug_display)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     return 0
+                if key == ord("c"):
+                    for camera_index, state in states.items():
+                        state.selector.clear()
+                        state.processor.set_section_boxes(state.selector.boxes)
+                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
+                if key == ord("r"):
+                    for camera_index, state in states.items():
+                        state.selector.reset()
+                        state.processor.set_section_boxes(state.selector.boxes)
+                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
         finally:
-            capture.release()
+            for capture in captures.values():
+                capture.release()
             cv2.destroyAllWindows()
 
 
@@ -576,6 +858,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser(defaults=defaults)
     args = parser.parse_args(argv_list)
+    try:
+        camera_indexes = resolve_camera_indexes(args)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.webcam and args.image_path:
         parser.error("Choose an image path or --webcam, not both.")
@@ -627,7 +913,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
-        section_boxes = parse_section_boxes(args.section_box)
+        configured_section_boxes_by_camera = resolve_configured_section_boxes(
+            args,
+            camera_indexes,
+            cli_has_option(argv_list, "--section-box"),
+        )
     except ValueError as exc:
         parser.error(str(exc))
     resolved_yolo_model = resolve_yolo_model_argument(args.detector, args.yolo_model)
@@ -636,21 +926,22 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         dispatcher = build_dispatcher(args)
-        processor = ParkingLotProcessor(
-            section_count=args.sections,
-            layout=args.layout,
-            section_boxes=section_boxes,
-            detector_name=args.detector,
-            yolo_model_path=resolved_yolo_model,
-            yolo_confidence=args.yolo_conf,
-            yolo_image_size=args.yolo_imgsz,
-            allow_yolo_fallback=not args.yolo_only,
-        )
         if args.preview:
-            return run_preview_loop(args, processor, dispatcher)
+            processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, camera_indexes)
+            return run_preview_loop(
+                args,
+                processors,
+                dispatcher,
+                camera_indexes,
+                configured_section_boxes_by_camera,
+                settings_path,
+            )
         if args.loop:
-            return run_loop(args, processor, dispatcher)
-        return run_once(args, processor, dispatcher)
+            processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, camera_indexes)
+            return run_loop(args, processors, dispatcher, camera_indexes)
+        run_once_camera_indexes = camera_indexes if args.webcam else [camera_indexes[0]]
+        processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, run_once_camera_indexes)
+        return run_once(args, processors, dispatcher, run_once_camera_indexes)
     except KeyboardInterrupt:
         return 0
     except Exception as exc:

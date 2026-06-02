@@ -228,23 +228,25 @@ class PlateUpdateDispatcher:
         self._local_image_publisher = local_image_publisher
         self._azure_image_publisher = azure_image_publisher
         self._last_sent: dict[str, float] = {}
+        self._emit_lock = threading.Lock()
 
     def emit(self, analysis: ProcessedFrameAnalysis, pretty: bool) -> None:
-        indent = 2 if pretty else None
-        print(json.dumps(analysis.payload, ensure_ascii=False, indent=indent))
+        with self._emit_lock:
+            indent = 2 if pretty else None
+            print(json.dumps(analysis.payload, ensure_ascii=False, indent=indent))
 
-        updates = self._collect_updates(analysis.sections)
-        for update in updates:
-            if not self._is_cooldown_elapsed(update.plate):
-                continue
+            updates = self._collect_updates(analysis.sections)
+            for update in updates:
+                if not self._is_cooldown_elapsed(update.plate):
+                    continue
 
-            try:
-                image_url = self._build_image_url(update)
-                self._send_to_firebase(update, image_url)
-                self._send_to_server(update, image_url)
-                self._last_sent[update.plate] = time.monotonic()
-            except Exception as exc:
-                print(f"Publish error: {exc}", file=sys.stderr)
+                try:
+                    image_url = self._build_image_url(update)
+                    self._send_to_firebase(update, image_url)
+                    self._send_to_server(update, image_url)
+                    self._last_sent[update.plate] = time.monotonic()
+                except Exception as exc:
+                    print(f"Publish error: {exc}", file=sys.stderr)
 
     def _collect_updates(self, sections: list[ProcessedSectionResult]) -> list[PlateUpdate]:
         updates: dict[str, PlateUpdate] = {}

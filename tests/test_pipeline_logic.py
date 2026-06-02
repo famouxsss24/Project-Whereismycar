@@ -1,4 +1,5 @@
 import json
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +9,13 @@ import numpy as np
 
 from parking_processor import ParkingLotProcessor
 from parking_types import SectionSpec
-from parking_pipeline import load_settings_defaults, parse_section_box_argument
+from parking_pipeline import (
+    load_settings_defaults,
+    parse_camera_list_argument,
+    parse_section_box_argument,
+    resolve_configured_section_boxes,
+    save_camera_section_boxes,
+)
 from plate_detection import YoloPlateDetector, divide_into_sections
 from plate_ocr import PlateResult
 
@@ -117,6 +124,7 @@ class CustomSectionSpecTests(unittest.TestCase):
         processor.section_count = len(boxes)
         processor.layout = "custom"
         processor._section_cache = {}
+        processor._section_lock = threading.RLock()
         return processor
 
     def test_custom_section_specs_are_used(self):
@@ -131,6 +139,25 @@ class CustomSectionSpecTests(unittest.TestCase):
         processor = self._make_custom_processor([(10, 5, 200, 45)])
         with self.assertRaises(ValueError):
             processor.get_section_specs((80, 140, 3))
+
+    def test_custom_sections_skip_full_frame_batch_detection(self):
+        class Detector:
+            name = "yolo"
+
+            def detect_sections(self, _frame, _section_specs):
+                raise AssertionError("full-frame batch detection should not run for custom sections")
+
+            def detect(self, _section_image):
+                return None
+
+        processor = self._make_custom_processor([(10, 5, 60, 45)])
+        processor.detector = Detector()
+        processor.fallback_detector = None
+
+        analysis = processor.process_frame(np.zeros((80, 140, 3), dtype=np.uint8), "test", "custom")
+
+        self.assertEqual(analysis.payload["section_count"], 1)
+        self.assertEqual(len(analysis.sections), 1)
 
 
 class SettingsLoadingTests(unittest.TestCase):
@@ -153,8 +180,85 @@ class SettingsLoadingTests(unittest.TestCase):
 
             defaults = load_settings_defaults(Path(settings_path), [])
             self.assertEqual(defaults["webcam"], True)
-            self.assertEqual(defaults["camera"], 1)
+            self.assertEqual(defaults["camera"], [1])
             self.assertEqual(defaults["section_box"], ["10,20,100,60", "150,20,100,60", "290,20,100,60"])
+
+    def test_load_settings_defaults_reads_multiple_cameras(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = f"{temp_dir}/settings.json"
+            with open(settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump({"cameras": [0, 1, 1]}, settings_file)
+
+            defaults = load_settings_defaults(Path(settings_path), [])
+            self.assertEqual(defaults["camera"], [0, 1])
+
+    def test_load_settings_defaults_reads_camera_section_boxes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = f"{temp_dir}/settings.json"
+            with open(settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump(
+                    {
+                        "camera_section_boxes": {
+                            "0": [{"x": 10, "y": 20, "width": 100, "height": 60}],
+                            "1": ["30,40,120,70"],
+                        }
+                    },
+                    settings_file,
+                )
+
+            defaults = load_settings_defaults(Path(settings_path), [])
+            self.assertEqual(defaults["camera_section_boxes"][0], ["10,20,100,60"])
+            self.assertEqual(defaults["camera_section_boxes"][1], ["30,40,120,70"])
+
+    def test_cli_camera_disables_settings_camera(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = f"{temp_dir}/settings.json"
+            with open(settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump({"cameras": [0, 1]}, settings_file)
+
+            defaults = load_settings_defaults(Path(settings_path), ["--camera", "2"])
+            self.assertNotIn("camera", defaults)
+
+    def test_parse_camera_list_argument(self):
+        self.assertEqual(parse_camera_list_argument("0, 2"), [0, 2])
+
+    def test_resolve_configured_section_boxes_prefers_camera_specific_boxes(self):
+        namespace = mock.Mock()
+        namespace.webcam = True
+        namespace.section_box = ["1,2,3,4"]
+        namespace.camera_section_boxes = {0: ["10,20,100,60"]}
+
+        resolved = resolve_configured_section_boxes(namespace, [0, 1], cli_section_box_override=False)
+
+        self.assertEqual(resolved[0], [(10, 20, 110, 80)])
+        self.assertEqual(resolved[1], [(1, 2, 4, 6)])
+
+    def test_resolve_configured_section_boxes_ignores_camera_boxes_for_images(self):
+        namespace = mock.Mock()
+        namespace.webcam = False
+        namespace.section_box = None
+        namespace.camera_section_boxes = {0: ["10,20,100,60"]}
+
+        resolved = resolve_configured_section_boxes(namespace, [0], cli_section_box_override=False)
+
+        self.assertEqual(resolved[0], None)
+
+    def test_save_camera_section_boxes_preserves_settings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            with open(settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump({"webcam": True, "camera_section_boxes": {"0": []}}, settings_file)
+
+            save_camera_section_boxes(settings_path, 1, [(10, 20, 110, 80)])
+
+            with open(settings_path, "r", encoding="utf-8") as settings_file:
+                saved = json.load(settings_file)
+            self.assertEqual(saved["webcam"], True)
+            self.assertEqual(saved["camera_section_boxes"]["0"], [])
+            self.assertEqual(
+                saved["camera_section_boxes"]["1"],
+                [{"x": 10, "y": 20, "width": 100, "height": 60}],
+            )
 
     def test_cli_section_box_disables_settings_section_boxes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
