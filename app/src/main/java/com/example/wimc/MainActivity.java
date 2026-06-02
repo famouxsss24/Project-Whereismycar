@@ -288,7 +288,7 @@ public class MainActivity extends Activity
         });
     }
 
-    // ─── 차량 선택 후 처리 ─────────────────────────────────────────
+    // ─── 차량 선택 후 처리 (바로 이동 시작) ───────────────────────
     private void processVehicleSelection(DataSnapshot snapshot) {
         currentSnapshot = snapshot;
         currentPlate = snapshot.getKey();
@@ -300,32 +300,23 @@ public class MainActivity extends Activity
             return;
         }
 
-        // 이미 결제됨
-        if (readPaidStatus(snapshot)) {
-            tvZone.setText(currentZone + " 구역");
-            updateStatus(currentPlate + " → 이미 결제된 차량입니다. 이동합니다.");
-            speak(currentZone + " 구역으로 안내해 드리겠습니다.");
-            showNavScreen();
-            startNavigationAfterDelay(currentZone);
-            return;
-        }
-
-        // 요금 계산
+        // entry_time이 없으면 자동 채움 (1시간 전 기준 — 상지님 코드 호환 백업)
         String entryTimeStr = snapshot.child("entry_time").getValue(String.class);
+        if (entryTimeStr == null || entryTimeStr.isEmpty()) {
+            long oneHourAgo = System.currentTimeMillis() - 3600_000L;
+            SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.KOREA);
+            entryTimeStr = fmt.format(new Date(oneHourAgo));
+            snapshot.getRef().child("entry_time").setValue(entryTimeStr);
+        }
+        // 요금 계산
         originalFee = calculateParkingFee(entryTimeStr);
 
-        if (originalFee == 0) {
-            // 무료
-            snapshot.getRef().child("is_paid").setValue(true);
-            tvZone.setText(currentZone + " 구역");
-            updateStatus(currentPlate + " → 무료 시간입니다. 이동합니다.");
-            speak("무료 주차 시간입니다. " + currentZone + " 구역으로 안내해 드리겠습니다.");
-            showNavScreen();
-            startNavigationAfterDelay(currentZone);
-        } else {
-            // 결제 옵션 화면 표시
-            showPaymentOptionScreen(entryTimeStr);
-        }
+        // 결제 없이 바로 이동 시작
+        tvZone.setText(currentZone + " 구역");
+        updateStatus(currentPlate + " → " + currentZone + " 구역으로 이동합니다");
+        speak(currentZone + " 구역으로 안내해 드리겠습니다.");
+        showNavScreen();
+        startNavigationAfterDelay(currentZone);
     }
 
     private boolean readPaidStatus(DataSnapshot snapshot) {
@@ -388,10 +379,13 @@ public class MainActivity extends Activity
     // ─── 광고 영상 재생 화면 ─────────────────────────────────────
     private void showAdScreen() {
         runOnUiThread(() -> {
+            mainLayout.setVisibility(View.GONE);
             paymentOptionLayout.setVisibility(View.GONE);
+            navLayout.setVisibility(View.GONE);
             adLayout.setVisibility(View.VISIBLE);
+            adWatched = true;   // 도착 후 강제 광고이므로 시청 = 30% 할인 자동 적용
             videoView.start();
-            speak("광고를 시청해 주세요.");
+            speak("정산 광고를 시청해 주세요.");
         });
     }
 
@@ -492,7 +486,7 @@ public class MainActivity extends Activity
         }).start();
     }
 
-    // ─── 결제 성공 ─────────────────────────────────────────────
+    // ─── 결제 성공 (도착 후 결제 → 자동 복귀) ───────────────────
     private void handlePaymentSuccess() {
         runOnUiThread(() -> {
             layoutWebViewContainer.setVisibility(View.GONE);
@@ -507,9 +501,11 @@ public class MainActivity extends Activity
                 ref.child("quiz_correct").setValue(quizCorrect);
                 ref.child("paid_at").setValue(currentTimestamp());
 
+                // 이미 차량 위치에 도착해있음 → 결제 완료 후 안내 + 자동 복귀
                 showNavScreen();
-                speak("결제가 완료되었습니다. " + currentZone + " 구역으로 안내해 드리겠습니다.");
-                startNavigationAfterDelay(currentZone);
+                updateNav(currentZone, "결제 완료 — 안전 운전 하세요");
+                speak("결제가 완료되었습니다. 안전 운전 하세요.");
+                scheduleAutoReturn();
             }
         });
     }
@@ -644,8 +640,9 @@ public class MainActivity extends Activity
                     // 홈베이스 복귀 완료 → 메인 화면
                     backToMainScreen();
                 } else {
-                    speak(location + " 구역에 도착했습니다. 안전 운전 하세요.");
-                    scheduleAutoReturn();
+                    // 차량 위치 도착 → 광고 영상 자동 재생
+                    speak(location + " 구역에 도착했습니다. 광고 시청 후 정산이 진행됩니다.");
+                    new Handler(Looper.getMainLooper()).postDelayed(this::showAdScreen, 2500);
                 }
                 break;
             case OnGoToLocationStatusChangedListener.ABORT:
