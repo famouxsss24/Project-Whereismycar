@@ -61,12 +61,6 @@ class SectionResult:
 
 
 @dataclass(frozen=True)
-class ProcessedFrameResult:
-    frame: np.ndarray
-    analysis: ProcessedFrameAnalysis
-
-
-@dataclass(frozen=True)
 class ProcessedSectionResult:
     result: SectionResult
     rectified_plate: np.ndarray | None

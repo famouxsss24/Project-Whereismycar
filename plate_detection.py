@@ -311,9 +311,6 @@ class YoloPlateDetector:
             return None
         return clipped
 
-    def _predict_ranked_boxes(self, image: np.ndarray) -> list[tuple[float, tuple[int, int, int, int]]]:
-        return self._predict_ranked_boxes_with_confidence(image, self.confidence)
-
     def _predict_ranked_boxes_with_confidence(
         self,
         image: np.ndarray,

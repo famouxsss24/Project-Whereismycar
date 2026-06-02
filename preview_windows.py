@@ -8,11 +8,100 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from parking_types import ProcessedSectionResult, SectionSpec
+from parking_types import Box, ProcessedSectionResult, SectionSpec
 
 
 WINDOW_NAME = "Parking OCR Preview"
 CROP_WINDOW_NAME = "Parking OCR Crop Debug"
+MIN_SCAN_BOX_SIZE = 12
+
+
+class ScanAreaSelector:
+    def __init__(self) -> None:
+        self._boxes: list[Box] = []
+        self._initial_boxes: list[Box] = []
+        self._frame_shape: tuple[int, ...] | None = None
+        self._drag_start: tuple[int, int] | None = None
+        self._drag_end: tuple[int, int] | None = None
+        self._changed = False
+        self._has_user_selection = False
+
+    def set_frame_shape(self, frame_shape: tuple[int, ...]) -> None:
+        self._frame_shape = frame_shape
+
+    def set_initial_boxes(self, boxes: list[Box]) -> None:
+        self._initial_boxes = list(boxes)
+        if not self._has_user_selection:
+            self._boxes = list(boxes)
+
+    @property
+    def boxes(self) -> list[Box]:
+        return list(self._boxes)
+
+    @property
+    def draft_box(self) -> Box | None:
+        if self._drag_start is None or self._drag_end is None:
+            return None
+        return self._normalize_box(self._drag_start, self._drag_end)
+
+    def consume_changed(self) -> bool:
+        changed = self._changed
+        self._changed = False
+        return changed
+
+    def clear(self) -> None:
+        self._boxes = []
+        self._drag_start = None
+        self._drag_end = None
+        self._has_user_selection = True
+        self._changed = True
+
+    def reset(self) -> None:
+        self._boxes = list(self._initial_boxes)
+        self._drag_start = None
+        self._drag_end = None
+        self._has_user_selection = False
+        self._changed = True
+
+    def mouse_callback(self, event: int, x: int, y: int, flags: int, userdata: object | None = None) -> None:
+        point = self._clamp_point((x, y))
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self._drag_start = point
+            self._drag_end = point
+            return
+        if event == cv2.EVENT_MOUSEMOVE and self._drag_start is not None:
+            self._drag_end = point
+            return
+        if event == cv2.EVENT_LBUTTONUP and self._drag_start is not None:
+            self._drag_end = point
+            box = self.draft_box
+            self._drag_start = None
+            self._drag_end = None
+            if box is None:
+                return
+            x1, y1, x2, y2 = box
+            if x2 - x1 < MIN_SCAN_BOX_SIZE or y2 - y1 < MIN_SCAN_BOX_SIZE:
+                return
+            if not self._has_user_selection:
+                self._boxes = []
+                self._has_user_selection = True
+            self._boxes.append(box)
+            self._changed = True
+
+    def _normalize_box(self, start: tuple[int, int], end: tuple[int, int]) -> Box | None:
+        x1, x2 = sorted((start[0], end[0]))
+        y1, y2 = sorted((start[1], end[1]))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return (x1, y1, x2, y2)
+
+    def _clamp_point(self, point: tuple[int, int]) -> tuple[int, int]:
+        if self._frame_shape is None:
+            return point
+        height, width = self._frame_shape[:2]
+        x = min(max(point[0], 0), max(width - 1, 0))
+        y = min(max(point[1], 0), max(height - 1, 0))
+        return (x, y)
 
 
 @lru_cache(maxsize=8)
@@ -107,7 +196,7 @@ def preview_lines_from_payload(
             lines.append((text, 24, color))
 
     lines.append((f"Last OCR: {format_elapsed(last_completed_at)}", 20, (220, 220, 220)))
-    lines.append(("Press q or Esc to quit.", 20, (220, 220, 220)))
+    lines.append(("Drag scan areas. c clear, r reset, q quit.", 20, (220, 220, 220)))
     if latest_error:
         lines.append((f"Error: {latest_error}", 20, (255, 140, 140)))
     return lines
@@ -120,6 +209,7 @@ def draw_preview_frame(
     pending: bool,
     last_completed_at: float | None,
     latest_error: str | None,
+    draft_box: Box | None = None,
 ) -> np.ndarray:
     display = frame.copy()
     payload_sections: dict[str, dict[str, object]] = {}
@@ -152,6 +242,10 @@ def draw_preview_frame(
                 color,
                 2,
             )
+
+    if draft_box is not None:
+        x1, y1, x2, y2 = draft_box
+        cv2.rectangle(display, (x1, y1), (x2, y2), (245, 245, 90), 2)
 
     return draw_text_panel(display, preview_lines_from_payload(payload, pending, last_completed_at, latest_error))
 
