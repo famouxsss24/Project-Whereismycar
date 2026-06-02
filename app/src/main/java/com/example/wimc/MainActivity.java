@@ -586,7 +586,7 @@ public class MainActivity extends Activity
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
-        card.setBackgroundColor(Color.parseColor("#2A2A3E"));
+        card.setBackground(androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_card));
         card.setPadding(28, 28, 28, 28);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(560, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(28, 0, 28, 0);
@@ -594,7 +594,7 @@ public class MainActivity extends Activity
 
         ImageView iv = new ImageView(this);
         iv.setLayoutParams(new LinearLayout.LayoutParams(500, 160));
-        iv.setBackgroundColor(Color.WHITE);
+        iv.setBackgroundColor(Color.parseColor("#F7F0EC"));
         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         if (imageUrl != null && !imageUrl.isEmpty()) {
             Glide.with(this).load(imageUrl).into(iv);
@@ -603,7 +603,7 @@ public class MainActivity extends Activity
 
         TextView tv = new TextView(this);
         tv.setText(plate);
-        tv.setTextColor(Color.WHITE);
+        tv.setTextColor(Color.parseColor("#3C3237"));
         tv.setTextSize(28);
         tv.setPadding(0, 20, 0, 0);
         tv.setGravity(Gravity.CENTER);
