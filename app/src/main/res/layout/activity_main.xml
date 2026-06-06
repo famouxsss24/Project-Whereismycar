@@ -13,6 +13,51 @@
         android:gravity="center_horizontal"
         android:padding="48dp">
 
+        <!-- 언어 선택 버튼 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btnLangKo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🇰🇷 한국어"
+                android:textSize="16sp"
+                android:textColor="#3C3237"
+                android:backgroundTint="#FFE0D8"
+                android:layout_marginEnd="8dp"/>
+            <Button
+                android:id="@+id/btnLangEn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🇺🇸 EN"
+                android:textSize="16sp"
+                android:textColor="#3C3237"
+                android:backgroundTint="#FFFFFF"
+                android:layout_marginEnd="8dp"/>
+            <Button
+                android:id="@+id/btnLangJa"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🇯🇵 日本語"
+                android:textSize="16sp"
+                android:textColor="#3C3237"
+                android:backgroundTint="#FFFFFF"
+                android:layout_marginEnd="8dp"/>
+            <Button
+                android:id="@+id/btnLangZh"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🇨🇳 中文"
+                android:textSize="16sp"
+                android:textColor="#3C3237"
+                android:backgroundTint="#FFFFFF"/>
+        </LinearLayout>
+
         <!-- 타이틀 -->
         <TextView
             android:layout_width="wrap_content"
@@ -21,16 +66,16 @@
             android:textSize="60sp"
             android:textStyle="bold"
             android:textColor="#FF6B6B"
-            android:layout_marginTop="20dp"
             android:layout_marginBottom="8dp"/>
 
         <TextView
+            android:id="@+id/tvSubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="차량 번호판 뒷 4자리를 입력해 주세요"
             android:textSize="22sp"
             android:textColor="#A89A95"
-            android:layout_marginBottom="44dp"/>
+            android:layout_marginBottom="36dp"/>
 
         <!-- 뒷 4자리 입력 -->
         <EditText
@@ -152,6 +197,7 @@
         android:visibility="gone">
 
         <TextView
+            android:id="@+id/tvQuizTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="🎯 광고 퀴즈"
@@ -161,6 +207,7 @@
             android:layout_marginBottom="16dp"/>
 
         <TextView
+            android:id="@+id/tvQuizReward"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="정답 시 +100 포인트 🎁"

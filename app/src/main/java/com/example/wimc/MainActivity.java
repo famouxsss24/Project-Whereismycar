@@ -101,6 +101,146 @@ public class MainActivity extends Activity
     private FrameLayout layoutWebViewContainer;
     private WebView paymentWebView;
 
+    // ───── 다국어 ─────
+    private String lang = "ko";   // ko, en, ja, zh
+    private static final java.util.Map<String, java.util.Map<String, String>> STR = new java.util.HashMap<>();
+    static {
+        java.util.Map<String, String> ko = new java.util.HashMap<>();
+        ko.put("subtitle", "차량 번호판 뒷 4자리를 입력해 주세요");
+        ko.put("search", "차량 찾기");
+        ko.put("ready", "Temi 준비 완료");
+        ko.put("waiting", "Temi 연결 대기 중...");
+        ko.put("input4", "숫자 4자리를 입력하세요");
+        ko.put("notfound", "해당 번호로 등록된 차량이 없습니다.");
+        ko.put("tts_notfound", "등록된 차량을 찾을 수 없습니다.");
+        ko.put("select", "본인 차량을 선택해 주세요 🚙");
+        ko.put("tts_guide", "구역으로 안내해 드리겠습니다.");
+        ko.put("zone_suffix", " 구역");
+        ko.put("navi", "안내 중...");
+        ko.put("arrived_ad", "구역에 도착했습니다. 광고 시청 후 정산이 진행됩니다.");
+        ko.put("arrived_paid", "구역에 도착했습니다. 이미 정산이 완료된 차량입니다. 안전 운전 하세요.");
+        ko.put("ad_watch", "정산 광고를 시청해 주세요.");
+        ko.put("quiz_title", "🎯 광고 퀴즈");
+        ko.put("quiz_reward", "정답 시 +100 포인트 🎁");
+        ko.put("quiz_q", "류현진이 먹은 라면은?");
+        ko.put("quiz_a1", "신라면");
+        ko.put("quiz_a2", "진라면");
+        ko.put("tts_quiz", "광고 시청이 완료되었습니다. 30퍼센트 할인이 적용됩니다. 광고 퀴즈에 답해주세요.");
+        ko.put("correct", "🎉 정답! +100 포인트 적립");
+        ko.put("tts_correct", "정답입니다. 100 포인트가 적립되었습니다.");
+        ko.put("wrong", "오답이지만 광고 시청 30% 할인은 그대로 적용됩니다.");
+        ko.put("tts_wrong", "오답입니다. 하지만 광고 시청 할인은 적용됩니다.");
+        ko.put("pay_ing", "카카오페이 결제 진행 중...");
+        ko.put("tts_paid", "결제가 완료되었습니다. 안전 운전 하세요.");
+        ko.put("paid_done", "결제 완료 — 안전 운전 하세요");
+        ko.put("tts_return", "대기 위치로 복귀하겠습니다.");
+        ko.put("tts_return_low", "배터리가 부족합니다. 충전소로 복귀하겠습니다.");
+        STR.put("ko", ko);
+
+        java.util.Map<String, String> en = new java.util.HashMap<>();
+        en.put("subtitle", "Enter the last 4 digits of your plate");
+        en.put("search", "Find My Car");
+        en.put("ready", "Temi Ready");
+        en.put("waiting", "Connecting to Temi...");
+        en.put("input4", "Please enter 4 digits");
+        en.put("notfound", "No vehicle found for this number.");
+        en.put("tts_notfound", "No registered vehicle found.");
+        en.put("select", "Please select your vehicle 🚙");
+        en.put("tts_guide", "I will guide you to the zone.");
+        en.put("zone_suffix", " Zone");
+        en.put("navi", "Guiding...");
+        en.put("arrived_ad", "zone. Settlement will proceed after the ad.");
+        en.put("arrived_paid", "zone. Already paid. Drive safely.");
+        en.put("ad_watch", "Please watch the advertisement.");
+        en.put("quiz_title", "🎯 Ad Quiz");
+        en.put("quiz_reward", "+100 points if correct 🎁");
+        en.put("quiz_q", "Which ramen did Ryu Hyun-jin eat?");
+        en.put("quiz_a1", "Shin Ramyun");
+        en.put("quiz_a2", "Jin Ramen");
+        en.put("tts_quiz", "Ad finished. 30 percent discount applied. Please answer the quiz.");
+        en.put("correct", "🎉 Correct! +100 points");
+        en.put("tts_correct", "Correct. 100 points have been earned.");
+        en.put("wrong", "Wrong, but the 30% ad discount still applies.");
+        en.put("tts_wrong", "Wrong answer. But the ad discount still applies.");
+        en.put("pay_ing", "Processing KakaoPay payment...");
+        en.put("tts_paid", "Payment complete. Drive safely.");
+        en.put("paid_done", "Payment complete — Drive safely");
+        en.put("tts_return", "Returning to standby position.");
+        en.put("tts_return_low", "Low battery. Returning to charging station.");
+        STR.put("en", en);
+
+        java.util.Map<String, String> ja = new java.util.HashMap<>();
+        ja.put("subtitle", "ナンバープレート末尾4桁を入力してください");
+        ja.put("search", "車を探す");
+        ja.put("ready", "Temi 準備完了");
+        ja.put("waiting", "Temi 接続待機中...");
+        ja.put("input4", "数字4桁を入力してください");
+        ja.put("notfound", "該当する車両が見つかりません。");
+        ja.put("tts_notfound", "登録された車両が見つかりません。");
+        ja.put("select", "ご自分の車両を選択してください 🚙");
+        ja.put("tts_guide", "エリアへご案内します。");
+        ja.put("zone_suffix", " エリア");
+        ja.put("navi", "案内中...");
+        ja.put("arrived_ad", "エリアに到着しました。広告視聴後に精算します。");
+        ja.put("arrived_paid", "エリアに到着しました。精算済みです。安全運転を。");
+        ja.put("ad_watch", "広告をご視聴ください。");
+        ja.put("quiz_title", "🎯 広告クイズ");
+        ja.put("quiz_reward", "正解で +100 ポイント 🎁");
+        ja.put("quiz_q", "リュ・ヒョンジンが食べたラーメンは?");
+        ja.put("quiz_a1", "辛ラーメン");
+        ja.put("quiz_a2", "ジンラーメン");
+        ja.put("tts_quiz", "広告の視聴が完了しました。30パーセント割引が適用されます。クイズにお答えください。");
+        ja.put("correct", "🎉 正解! +100 ポイント");
+        ja.put("tts_correct", "正解です。100ポイントが貯まりました。");
+        ja.put("wrong", "不正解ですが、広告視聴30%割引は適用されます。");
+        ja.put("tts_wrong", "不正解です。ですが広告割引は適用されます。");
+        ja.put("pay_ing", "カカオペイ決済処理中...");
+        ja.put("tts_paid", "決済が完了しました。安全運転を。");
+        ja.put("paid_done", "決済完了 — 安全運転を");
+        ja.put("tts_return", "待機位置に戻ります。");
+        ja.put("tts_return_low", "バッテリー不足です。充電ステーションに戻ります。");
+        STR.put("ja", ja);
+
+        java.util.Map<String, String> zh = new java.util.HashMap<>();
+        zh.put("subtitle", "请输入车牌号后四位");
+        zh.put("search", "查找车辆");
+        zh.put("ready", "Temi 准备就绪");
+        zh.put("waiting", "正在连接 Temi...");
+        zh.put("input4", "请输入四位数字");
+        zh.put("notfound", "未找到该号码的车辆。");
+        zh.put("tts_notfound", "未找到已登记的车辆。");
+        zh.put("select", "请选择您的车辆 🚙");
+        zh.put("tts_guide", "为您带路到区域。");
+        zh.put("zone_suffix", " 区");
+        zh.put("navi", "引导中...");
+        zh.put("arrived_ad", "区。观看广告后进行结算。");
+        zh.put("arrived_paid", "区。已完成结算。请安全驾驶。");
+        zh.put("ad_watch", "请观看广告。");
+        zh.put("quiz_title", "🎯 广告问答");
+        zh.put("quiz_reward", "答对 +100 积分 🎁");
+        zh.put("quiz_q", "柳贤振吃的是哪种拉面?");
+        zh.put("quiz_a1", "辛拉面");
+        zh.put("quiz_a2", "真拉面");
+        zh.put("tts_quiz", "广告观看完成。已享受30%折扣。请回答问答。");
+        zh.put("correct", "🎉 答对! +100 积分");
+        zh.put("tts_correct", "答对了。已获得100积分。");
+        zh.put("wrong", "答错了，但广告30%折扣仍然适用。");
+        zh.put("tts_wrong", "答错了。但广告折扣仍然适用。");
+        zh.put("pay_ing", "正在处理 KakaoPay 支付...");
+        zh.put("tts_paid", "支付完成。请安全驾驶。");
+        zh.put("paid_done", "支付完成 — 请安全驾驶");
+        zh.put("tts_return", "正在返回待机位置。");
+        zh.put("tts_return_low", "电量不足。正在返回充电站。");
+        STR.put("zh", zh);
+    }
+
+    private String t(String key) {
+        java.util.Map<String, String> m = STR.get(lang);
+        if (m == null) m = STR.get("ko");
+        String v = m.get(key);
+        return v != null ? v : key;
+    }
+
     // ───── 상태 ─────
     private Robot robot;
     private DatabaseReference dbRef;
@@ -112,6 +252,11 @@ public class MainActivity extends Activity
     private int finalFee = 0;
     private boolean adWatched = false;
     private boolean quizCorrect = false;
+
+    // UI 참조 (다국어 갱신용)
+    private TextView tvSubtitle;
+    private Button btnSearchRef;
+    private TextView tvQuizTitle, tvQuizReward;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -141,6 +286,8 @@ public class MainActivity extends Activity
         tvSelectLabel = findViewById(R.id.tvSelectLabel);
         scrollPlates  = findViewById(R.id.scrollPlates);
         llPlateImages = findViewById(R.id.llPlateImages);
+        tvSubtitle    = findViewById(R.id.tvSubtitle);
+        btnSearchRef  = findViewById(R.id.btnSearch);
 
         // 광고
         adLayout  = findViewById(R.id.adLayout);
@@ -151,6 +298,8 @@ public class MainActivity extends Activity
         quizQuestion  = findViewById(R.id.quizQuestion);
         btnAnswer1    = findViewById(R.id.btnAnswer1);
         btnAnswer2    = findViewById(R.id.btnAnswer2);
+        tvQuizTitle   = findViewById(R.id.tvQuizTitle);
+        tvQuizReward  = findViewById(R.id.tvQuizReward);
 
         // 네비게이션
         navLayout    = findViewById(R.id.navLayout);
@@ -164,20 +313,48 @@ public class MainActivity extends Activity
     }
 
     private void setupListeners() {
-        Button btnSearch = findViewById(R.id.btnSearch);
-        btnSearch.setOnClickListener(v -> {
+        btnSearchRef.setOnClickListener(v -> {
             hideKeyboard();
             String last4 = etPlateNumber.getText().toString().trim();
             if (!LAST4_PATTERN.matcher(last4).matches()) {
-                Toast.makeText(this, "숫자 4자리를 입력하세요", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, t("input4"), Toast.LENGTH_SHORT).show();
                 return;
             }
             searchByLast4(last4);
         });
 
-        // 퀴즈 답변 버튼
-        btnAnswer1.setOnClickListener(v -> handleQuizAnswer(btnAnswer1.getText().toString()));
-        btnAnswer2.setOnClickListener(v -> handleQuizAnswer(btnAnswer2.getText().toString()));
+        // 퀴즈 답변 버튼 (정답 비교는 한국어 기준 키로 판정)
+        btnAnswer1.setOnClickListener(v -> handleQuizAnswer(false)); // 신라면 = 오답
+        btnAnswer2.setOnClickListener(v -> handleQuizAnswer(true));  // 진라면 = 정답
+
+        // 언어 선택 버튼
+        findViewById(R.id.btnLangKo).setOnClickListener(v -> applyLanguage("ko"));
+        findViewById(R.id.btnLangEn).setOnClickListener(v -> applyLanguage("en"));
+        findViewById(R.id.btnLangJa).setOnClickListener(v -> applyLanguage("ja"));
+        findViewById(R.id.btnLangZh).setOnClickListener(v -> applyLanguage("zh"));
+    }
+
+    // ─── 언어 전환 ────────────────────────────────────────────────
+    private void applyLanguage(String newLang) {
+        lang = newLang;
+        // 선택된 버튼 강조
+        int[] ids = {R.id.btnLangKo, R.id.btnLangEn, R.id.btnLangJa, R.id.btnLangZh};
+        String[] langs = {"ko", "en", "ja", "zh"};
+        for (int i = 0; i < ids.length; i++) {
+            Button b = findViewById(ids[i]);
+            b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
+                    Color.parseColor(langs[i].equals(lang) ? "#FFE0D8" : "#FFFFFF")));
+        }
+        // UI 텍스트 갱신
+        tvSubtitle.setText(t("subtitle"));
+        btnSearchRef.setText(t("search"));
+        tvSelectLabel.setText(t("select"));
+        quizQuestion.setText(t("quiz_q"));
+        btnAnswer1.setText(t("quiz_a1"));
+        btnAnswer2.setText(t("quiz_a2"));
+        tvQuizTitle.setText(t("quiz_title"));
+        tvQuizReward.setText(t("quiz_reward"));
+        if (isRobotReady) updateStatus(t("ready"));
     }
 
     private void initWebView() {
@@ -226,7 +403,7 @@ public class MainActivity extends Activity
     @Override
     public void onRobotReady(boolean isReady) {
         isRobotReady = isReady;
-        updateStatus(isReady ? "Temi 준비 완료" : "Temi 연결 대기 중...");
+        updateStatus(isReady ? t("ready") : t("waiting"));
     }
 
     // ─── Firebase 검색 ─────────────────────────────────────────────
@@ -240,8 +417,8 @@ public class MainActivity extends Activity
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 if (!snapshot.exists()) {
-                    updateStatus("해당 번호로 등록된 차량이 없습니다.");
-                    speak("등록된 차량을 찾을 수 없습니다.");
+                    updateStatus(t("notfound"));
+                    speak(t("tts_notfound"));
                     return;
                 }
                 List<DataSnapshot> results = new ArrayList<>();
@@ -285,9 +462,9 @@ public class MainActivity extends Activity
         originalFee = calculateParkingFee(entryTimeStr);
 
         // 결제 없이 바로 이동 시작
-        tvZone.setText(currentZone + " 구역");
-        updateStatus(currentPlate + " → " + currentZone + " 구역으로 이동합니다");
-        speak(currentZone + " 구역으로 안내해 드리겠습니다.");
+        tvZone.setText(currentZone + t("zone_suffix"));
+        updateStatus(currentPlate + " → " + currentZone + t("zone_suffix"));
+        speak(currentZone + " " + t("tts_guide"));
         showNavScreen();
         startNavigationAfterDelay(currentZone);
     }
@@ -323,7 +500,7 @@ public class MainActivity extends Activity
             adLayout.setVisibility(View.VISIBLE);
             adWatched = true;   // 도착 후 강제 광고이므로 시청 = 30% 할인 자동 적용
             videoView.start();
-            speak("정산 광고를 시청해 주세요.");
+            speak(t("ad_watch"));
         });
     }
 
@@ -336,19 +513,24 @@ public class MainActivity extends Activity
     private void showQuizScreen() {
         adLayout.setVisibility(View.GONE);
         quizLayout.setVisibility(View.VISIBLE);
-        speak("광고 시청이 완료되었습니다. 30퍼센트 할인이 적용됩니다. 광고 퀴즈에 답해주세요.");
+        quizQuestion.setText(t("quiz_q"));
+        btnAnswer1.setText(t("quiz_a1"));
+        btnAnswer2.setText(t("quiz_a2"));
+        tvQuizTitle.setText(t("quiz_title"));
+        tvQuizReward.setText(t("quiz_reward"));
+        speak(t("tts_quiz"));
     }
 
-    private void handleQuizAnswer(String selected) {
-        if (CORRECT_ANSWER.equals(selected)) {
+    private void handleQuizAnswer(boolean isCorrect) {
+        if (isCorrect) {
             quizCorrect = true;
-            Toast.makeText(this, "🎉 정답! +" + QUIZ_REWARD_POINTS + " 포인트 적립", Toast.LENGTH_LONG).show();
-            speak("정답입니다. " + QUIZ_REWARD_POINTS + " 포인트가 적립되었습니다.");
+            Toast.makeText(this, t("correct"), Toast.LENGTH_LONG).show();
+            speak(t("tts_correct"));
             addPointsToUser(currentPlate, QUIZ_REWARD_POINTS);
         } else {
             quizCorrect = false;
-            Toast.makeText(this, "오답이지만 광고 시청 30% 할인은 그대로 적용됩니다.", Toast.LENGTH_LONG).show();
-            speak("오답입니다. 하지만 광고 시청 할인은 적용됩니다.");
+            Toast.makeText(this, t("wrong"), Toast.LENGTH_LONG).show();
+            speak(t("tts_wrong"));
         }
 
         // 결제 진행 (할인된 금액)
@@ -377,7 +559,7 @@ public class MainActivity extends Activity
 
     // ─── 카카오페이 결제 준비 요청 ─────────────────────────────────
     private void requestKakaoPay(int amount, String zone) {
-        runOnUiThread(() -> updateStatus("카카오페이 결제 진행 중..."));
+        runOnUiThread(() -> updateStatus(t("pay_ing")));
         new Thread(() -> {
             try {
                 URL url = new URL(KAKAO_READY_URL);
@@ -442,8 +624,8 @@ public class MainActivity extends Activity
 
                 // 이미 차량 위치에 도착해있음 → 결제 완료 후 안내 + 자동 복귀
                 showNavScreen();
-                updateNav(currentZone, "결제 완료 — 안전 운전 하세요");
-                speak("결제가 완료되었습니다. 안전 운전 하세요.");
+                updateNav(currentZone, t("paid_done"));
+                speak(t("tts_paid"));
                 scheduleAutoReturn();
             }
         });
@@ -469,9 +651,9 @@ public class MainActivity extends Activity
             quizLayout.setVisibility(View.GONE);
             navLayout.setVisibility(View.VISIBLE);
 
-            tvNavZone.setText(currentZone + " 구역");
-            tvNavStatus.setText("안내 중...");
-            navInfo.setText("목적지: " + currentZone + " 구역\n상태: 안내 중\n방향: 직진");
+            tvNavZone.setText(currentZone + t("zone_suffix"));
+            tvNavStatus.setText(t("navi"));
+            navInfo.setText(currentZone + t("zone_suffix") + "\n" + t("navi"));
         });
     }
 
@@ -484,7 +666,7 @@ public class MainActivity extends Activity
             layoutWebViewContainer.setVisibility(View.GONE);
             etPlateNumber.setText("");
             resetResultUI();
-            updateStatus("Temi 준비 완료");
+            updateStatus(t("ready"));
         });
     }
 
@@ -578,12 +760,12 @@ public class MainActivity extends Activity
                     backToMainScreen();
                 } else if (currentSnapshot != null && readPaidStatus(currentSnapshot)) {
                     // 이미 결제된 차량 → 광고/결제 스킵하고 바로 복귀
-                    speak(location + " 구역에 도착했습니다. 이미 정산이 완료된 차량입니다. 안전 운전 하세요.");
-                    updateNav(location, "정산 완료 — 안전 운전 하세요");
+                    speak(location + " " + t("arrived_paid"));
+                    updateNav(location, t("paid_done"));
                     scheduleAutoReturn();
                 } else {
                     // 미결제 차량 → 광고 영상 자동 재생
-                    speak(location + " 구역에 도착했습니다. 광고 시청 후 정산이 진행됩니다.");
+                    speak(location + " " + t("arrived_ad"));
                     new Handler(Looper.getMainLooper()).postDelayed(this::showAdScreen, 2500);
                 }
                 break;
@@ -606,9 +788,9 @@ public class MainActivity extends Activity
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             int battery = readBatteryLevel();
             if (battery >= 0 && battery < LOW_BATTERY_THRESHOLD) {
-                speak("배터리가 부족합니다. 충전소로 복귀하겠습니다.");
+                speak(t("tts_return_low"));
             } else {
-                speak("대기 위치로 복귀하겠습니다.");
+                speak(t("tts_return"));
             }
             updateNav(HOME_BASE, "복귀 중...");
             if (isRobotReady) robot.goTo(HOME_BASE);
