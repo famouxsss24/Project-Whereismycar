@@ -84,11 +84,6 @@ public class MainActivity extends Activity
     private HorizontalScrollView scrollPlates;
     private LinearLayout llPlateImages;
 
-    // ───── UI: 결제 옵션 ─────
-    private LinearLayout paymentOptionLayout;
-    private TextView tvPaymentPlate, tvParkingTime, tvOriginalFee;
-    private Button btnPayDirect, btnPayWithAd;
-
     // ───── UI: 광고 ─────
     private FrameLayout adLayout;
     private VideoView videoView;
@@ -147,14 +142,6 @@ public class MainActivity extends Activity
         scrollPlates  = findViewById(R.id.scrollPlates);
         llPlateImages = findViewById(R.id.llPlateImages);
 
-        // 결제 옵션
-        paymentOptionLayout = findViewById(R.id.paymentOptionLayout);
-        tvPaymentPlate = findViewById(R.id.tvPaymentPlate);
-        tvParkingTime  = findViewById(R.id.tvParkingTime);
-        tvOriginalFee  = findViewById(R.id.tvOriginalFee);
-        btnPayDirect   = findViewById(R.id.btnPayDirect);
-        btnPayWithAd   = findViewById(R.id.btnPayWithAd);
-
         // 광고
         adLayout  = findViewById(R.id.adLayout);
         videoView = findViewById(R.id.videoView);
@@ -186,20 +173,6 @@ public class MainActivity extends Activity
                 return;
             }
             searchByLast4(last4);
-        });
-
-        // 결제 옵션 버튼
-        btnPayDirect.setOnClickListener(v -> {
-            // 광고 안 보고 전액 결제
-            adWatched = false;
-            quizCorrect = false;
-            finalFee = originalFee;
-            requestKakaoPay(finalFee, currentZone);
-        });
-
-        btnPayWithAd.setOnClickListener(v -> {
-            // 광고 시청으로 이동
-            showAdScreen();
         });
 
         // 퀴즈 답변 버튼
@@ -342,45 +315,10 @@ public class MainActivity extends Activity
         }
     }
 
-    private String calculateParkingDuration(String entryTimeStr) {
-        if (entryTimeStr == null || entryTimeStr.isEmpty()) return "-";
-        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.KOREA);
-        try {
-            Date entryTime = fmt.parse(entryTimeStr);
-            if (entryTime == null) return "-";
-            long diffMin = (new Date().getTime() - entryTime.getTime()) / (1000 * 60);
-            if (diffMin <= 0) return "0분";
-            long hours = diffMin / 60;
-            long minutes = diffMin % 60;
-            return (hours > 0 ? hours + "시간 " : "") + minutes + "분";
-        } catch (Exception e) {
-            return "-";
-        }
-    }
-
-    // ─── 결제 옵션 화면 표시 ──────────────────────────────────────
-    private void showPaymentOptionScreen(String entryTimeStr) {
-        runOnUiThread(() -> {
-            mainLayout.setVisibility(View.GONE);
-            paymentOptionLayout.setVisibility(View.VISIBLE);
-
-            tvPaymentPlate.setText(currentPlate);
-            tvParkingTime.setText(calculateParkingDuration(entryTimeStr));
-            tvOriginalFee.setText(String.format(Locale.KOREA, "%,d원", originalFee));
-
-            int discountedFee = (int) Math.round(originalFee * (1 - AD_DISCOUNT_RATE));
-            btnPayDirect.setText("지금 결제 — " + String.format(Locale.KOREA, "%,d원", originalFee));
-            btnPayWithAd.setText("광고 보고 30% 할인 — " + String.format(Locale.KOREA, "%,d원", discountedFee));
-
-            speak("주차 요금 " + originalFee + "원입니다. 광고 시청 시 30퍼센트 할인됩니다.");
-        });
-    }
-
     // ─── 광고 영상 재생 화면 ─────────────────────────────────────
     private void showAdScreen() {
         runOnUiThread(() -> {
             mainLayout.setVisibility(View.GONE);
-            paymentOptionLayout.setVisibility(View.GONE);
             navLayout.setVisibility(View.GONE);
             adLayout.setVisibility(View.VISIBLE);
             adWatched = true;   // 도착 후 강제 광고이므로 시청 = 30% 할인 자동 적용
@@ -527,7 +465,6 @@ public class MainActivity extends Activity
     private void showNavScreen() {
         runOnUiThread(() -> {
             mainLayout.setVisibility(View.GONE);
-            paymentOptionLayout.setVisibility(View.GONE);
             adLayout.setVisibility(View.GONE);
             quizLayout.setVisibility(View.GONE);
             navLayout.setVisibility(View.VISIBLE);
@@ -541,7 +478,6 @@ public class MainActivity extends Activity
     private void backToMainScreen() {
         runOnUiThread(() -> {
             mainLayout.setVisibility(View.VISIBLE);
-            paymentOptionLayout.setVisibility(View.GONE);
             adLayout.setVisibility(View.GONE);
             quizLayout.setVisibility(View.GONE);
             navLayout.setVisibility(View.GONE);
@@ -640,8 +576,13 @@ public class MainActivity extends Activity
                 if (HOME_BASE.equalsIgnoreCase(location)) {
                     // 홈베이스 복귀 완료 → 메인 화면
                     backToMainScreen();
+                } else if (currentSnapshot != null && readPaidStatus(currentSnapshot)) {
+                    // 이미 결제된 차량 → 광고/결제 스킵하고 바로 복귀
+                    speak(location + " 구역에 도착했습니다. 이미 정산이 완료된 차량입니다. 안전 운전 하세요.");
+                    updateNav(location, "정산 완료 — 안전 운전 하세요");
+                    scheduleAutoReturn();
                 } else {
-                    // 차량 위치 도착 → 광고 영상 자동 재생
+                    // 미결제 차량 → 광고 영상 자동 재생
                     speak(location + " 구역에 도착했습니다. 광고 시청 후 정산이 진행됩니다.");
                     new Handler(Looper.getMainLooper()).postDelayed(this::showAdScreen, 2500);
                 }
