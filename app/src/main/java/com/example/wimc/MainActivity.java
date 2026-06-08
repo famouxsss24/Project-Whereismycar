@@ -42,6 +42,7 @@ import com.robotemi.sdk.listeners.OnRobotReadyListener;
 import org.json.JSONObject;
 
 import java.io.OutputStream;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
@@ -76,6 +77,9 @@ public class MainActivity extends Activity
     private static final String KAKAO_CID = "TC0ONETIME";
     private static final String KAKAO_SECRET_KEY = "DEV82A2E59C77561B30D980F16DBBF4390B2252A";
     private static final String KAKAO_READY_URL  = "https://open-api.kakaopay.com/online/v1/payment/ready";
+    private static final String KAKAO_APPROVAL_URL = "https://wimc.local/payment/success";
+    private static final String KAKAO_CANCEL_URL = "https://wimc.local/payment/cancel";
+    private static final String KAKAO_FAIL_URL = "https://wimc.local/payment/fail";
 
     // ───── UI: 메인 ─────
     private LinearLayout mainLayout;
@@ -537,6 +541,8 @@ public class MainActivity extends Activity
         finalFee = (int) Math.round(originalFee * (1 - AD_DISCOUNT_RATE));
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             quizLayout.setVisibility(View.GONE);
+            showNavScreen();
+            tvNavStatus.setText(t("pay_ing"));
             requestKakaoPay(finalFee, currentZone);
         }, 1500);
     }
@@ -559,6 +565,8 @@ public class MainActivity extends Activity
 
     // ─── 카카오페이 결제 준비 요청 ─────────────────────────────────
     private void requestKakaoPay(int amount, String zone) {
+        // 카카오페이는 total_amount가 0이면 거절한다 → 최소 결제 금액 보장
+        final int payAmount = Math.max(amount, 100);
         runOnUiThread(() -> updateStatus(t("pay_ing")));
         new Thread(() -> {
             try {
@@ -575,11 +583,11 @@ public class MainActivity extends Activity
                 params.put("partner_user_id", "WIMC_CUSTOMER");
                 params.put("item_name", "내차로 주차 정산 (" + zone + " 구역)");
                 params.put("quantity", 1);
-                params.put("total_amount", amount);
+                params.put("total_amount", payAmount);
                 params.put("tax_free_amount", 0);
-                params.put("approval_url", "https://localhost/payment/success");
-                params.put("cancel_url",   "https://localhost/payment/cancel");
-                params.put("fail_url",     "https://localhost/payment/fail");
+                params.put("approval_url", KAKAO_APPROVAL_URL);
+                params.put("cancel_url", KAKAO_CANCEL_URL);
+                params.put("fail_url", KAKAO_FAIL_URL);
 
                 OutputStream os = conn.getOutputStream();
                 os.write(params.toString().getBytes("UTF-8"));
@@ -588,8 +596,7 @@ public class MainActivity extends Activity
 
                 int responseCode = conn.getResponseCode();
                 if (responseCode == 200) {
-                    Scanner s = new Scanner(conn.getInputStream()).useDelimiter("\\A");
-                    String response = s.hasNext() ? s.next() : "";
+                    String response = readResponseBody(conn.getInputStream());
                     JSONObject json = new JSONObject(response);
                     String redirectUrl = json.getString("next_redirect_mobile_url");
 
@@ -598,13 +605,27 @@ public class MainActivity extends Activity
                         paymentWebView.loadUrl(redirectUrl);
                     });
                 } else {
-                    runOnUiThread(() -> updateStatus("결제 API 응답 오류 (" + responseCode + ")"));
+                    InputStream errorStream = conn.getErrorStream();
+                    String errorBody = errorStream != null ? readResponseBody(errorStream) : "";
+                    String message = errorBody.length() > 90 ? errorBody.substring(0, 90) + "..." : errorBody;
+                    runOnUiThread(() -> {
+                        updateNav(currentZone, "결제 API 오류 (" + responseCode + ") " + message);
+                        new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::backToMainScreen, 3000);
+                    });
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                runOnUiThread(() -> updateStatus("결제 연동 예외: " + e.getMessage()));
+                runOnUiThread(() -> {
+                    updateNav(currentZone, "결제 오류: " + e.getMessage());
+                    new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::backToMainScreen, 3000);
+                });
             }
         }).start();
+    }
+
+    private String readResponseBody(InputStream stream) {
+        Scanner scanner = new Scanner(stream).useDelimiter("\\A");
+        return scanner.hasNext() ? scanner.next() : "";
     }
 
     // ─── 결제 성공 (도착 후 결제 → 자동 복귀) ───────────────────
@@ -671,6 +692,7 @@ public class MainActivity extends Activity
     }
 
     // ─── 공통 이동 (waypoint 소문자 정규화) ─────────────────────────
+    // 이동 직전에 Firebase에서 zone을 한 번 더 읽어 카메라가 갱신한 최신 구역으로 이동한다.
     private void startNavigationAfterDelay(String zone) {
         if (zone == null || zone.trim().isEmpty()) {
             updateStatus("이동할 구역 정보가 없습니다.");
@@ -680,9 +702,41 @@ public class MainActivity extends Activity
             updateStatus("Temi가 아직 준비되지 않았습니다.");
             return;
         }
-        final String target = zone.trim().toLowerCase();
         new Handler(Looper.getMainLooper()).postDelayed(
-                () -> robot.goTo(target), NAV_DELAY_MS);
+                () -> refreshZoneAndGo(zone), NAV_DELAY_MS);
+    }
+
+    // 이동 직전 Firebase에서 최신 zone 재조회 → 카메라가 갱신한 실시간 구역 반영
+    private void refreshZoneAndGo(String fallbackZone) {
+        if (currentPlate == null || dbRef == null) {
+            goToZone(fallbackZone);
+            return;
+        }
+        dbRef.child(currentPlate).child("zone")
+                .addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                String latestZone = snapshot.getValue(String.class);
+                if (latestZone == null || latestZone.trim().isEmpty()) {
+                    latestZone = fallbackZone;
+                }
+                // 최신 구역으로 화면/상태 동기화 후 이동
+                if (!latestZone.equals(currentZone)) {
+                    currentZone = latestZone;
+                    updateNav(latestZone, t("navi"));
+                }
+                goToZone(latestZone);
+            }
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                goToZone(fallbackZone);   // 조회 실패 시 기존 구역으로 이동
+            }
+        });
+    }
+
+    private void goToZone(String zone) {
+        if (zone == null || zone.trim().isEmpty() || !isRobotReady) return;
+        robot.goTo(zone.trim().toLowerCase());
     }
 
     // ─── 중복 차량 카드 ──────────────────────────────────────────
