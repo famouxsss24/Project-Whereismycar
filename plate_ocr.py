@@ -111,21 +111,37 @@ class PlateReader:
             with suppress_native_output():
                 from paddleocr import PaddleOCR
 
+                # 무거운 doc-orientation / unwarping / textline 보조 모델은 끈다(속도 ↑).
+                base_kwargs = dict(
+                    lang="korean",
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+
+                # 1) 경량(mobile) 검출 모델 우선 사용 — server 모델 대비 수 배 빠르고
+                #    다운로드 용량이 작아 부분 다운로드로 인한 초기화 실패도 줄어든다.
                 try:
                     return PaddleOCR(
-                        lang="korean",
-                        use_doc_orientation_classify=False,
-                        use_doc_unwarping=False,
-                        use_textline_orientation=False,
+                        text_detection_model_name="PP-OCRv5_mobile_det",
+                        **base_kwargs,
                     )
+                except Exception:
+                    pass
+
+                # 2) 모델명 미지정 — lang 기반 자동 선택(버전 호환 폴백).
+                try:
+                    return PaddleOCR(**base_kwargs)
                 except TypeError:
-                    # Backward compatibility for PaddleOCR versions that do not support these options.
+                    # 구버전 PaddleOCR: 보조 모델 옵션 미지원.
                     return PaddleOCR(lang="korean")
         except Exception as exc:  # pragma: no cover - surfaced in CLI mode
             version = f"{sys.version_info.major}.{sys.version_info.minor}"
             raise RuntimeError(
                 "PaddleOCR could not be initialized. "
                 "Use Python 3.12 with `pip install -r requirements.txt`. "
+                "If models were downloaded partially, delete the cache folder "
+                "`%USERPROFILE%\\.paddlex\\official_models` and run again. "
                 f"Current interpreter: {version}."
             ) from exc
 

@@ -1,28 +1,49 @@
 {
   "image_path": null,
   "webcam": true,
-  "camera": 0,
-  "sections": 3,
-  "section_boxes": [
-    {
-      "x": 20,
-      "y": 120,
-      "width": 180,
-      "height": 180
-    },
-    {
-      "x": 220,
-      "y": 120,
-      "width": 180,
-      "height": 180
-    },
-    {
-      "x": 420,
-      "y": 120,
-      "width": 180,
-      "height": 180
-    }
+  "cameras": [
+    3,
+    2
   ],
+  "sections": 2,
+  "camera_section_boxes": {
+    "2": [
+      {
+        "x": 214,
+        "y": 198,
+        "width": 86,
+        "height": 154
+      },
+      {
+        "x": 403,
+        "y": 186,
+        "width": 129,
+        "height": 171
+      }
+    ],
+    "3": [
+      {
+        "x": 46,
+        "y": 212,
+        "width": 153,
+        "height": 205
+      }
+    ]
+  },
+  "zone_offsets": {
+    "2": 2,
+    "3": 0
+  },
+  "section_zones": {
+    "2": [
+      "D",
+      "C"
+    ],
+    "3": [
+      "A",
+      "B"
+    ]
+  },
   "detector": "yolo",
   "yolo_only": true,
   "yolo_model": "models/license-plate-finetune-v1m.pt",
@@ -45,8 +66,15 @@
   "azure_secrets_path": "secrets/azure-blob.json",
   "timeout": 10.0,
   "interval": 1.0,
-  "plate_cooldown": 30.0,
-  "loop": false,
+  "plate_cooldown": 10.0,
+  "dwell_seconds": 1.0,
+  "known_plates": [
+    "184다4056",
+    "12아2971",
+    "136가1362",
+    "476나6798"
+  ],
+  "loop": true,
   "preview": true,
   "pretty": true
 }

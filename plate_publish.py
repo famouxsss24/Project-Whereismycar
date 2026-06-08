@@ -43,6 +43,13 @@ INVALID_FILE_CHARS_PATTERN = re.compile(r'[\\/:*?"<>|]+')
 PLATE_IMAGE_SIZE = (120, 30)  # width, height
 
 
+@dataclass
+class _DwellEntry:
+    zone: str
+    first_seen: float
+    last_seen: float
+
+
 @dataclass(frozen=True)
 class PlateUpdate:
     plate: str
@@ -206,9 +213,10 @@ class FirebasePlatePublisher:
         payload = {
             "zone": update.zone,
             "last4": update.last4,
-            "image_url": image_url,
         }
-        db.reference(f"{self._root_path}/{update.plate}", app=self._app).set(payload)
+        if image_url.strip():
+            payload["image_url"] = image_url
+        db.reference(f"{self._root_path}/{update.plate}", app=self._app).update(payload)
 
 
 class PlateUpdateDispatcher:
@@ -220,6 +228,9 @@ class PlateUpdateDispatcher:
         firebase_publisher: FirebasePlatePublisher | None = None,
         local_image_publisher: LocalImageWebPublisher | None = None,
         azure_image_publisher: AzureBlobImagePublisher | None = None,
+        zone_offsets: dict[str, int] | None = None,
+        section_zones: dict[str, list[str]] | None = None,
+        dwell_seconds: float = 5.0,
     ) -> None:
         self._server_url = server_url
         self._timeout = timeout
@@ -227,28 +238,55 @@ class PlateUpdateDispatcher:
         self._firebase_publisher = firebase_publisher
         self._local_image_publisher = local_image_publisher
         self._azure_image_publisher = azure_image_publisher
-        self._last_sent: dict[str, float] = {}
+        self._last_sent: dict[tuple[str, str], float] = {}
         self._emit_lock = threading.Lock()
+        # 카메라별 zone 시작 오프셋 (예: {"0": 0, "1": 2} -> 카메라0=A,B / 카메라1=C,D)
+        self._zone_offsets: dict[str, int] = zone_offsets or {}
+        self._section_zones: dict[str, list[str]] = section_zones or {}
+        # 주차 판단: 같은 구역에 dwell_seconds 이상 감지돼야 Firebase에 씀
+        self._dwell_seconds = dwell_seconds
+        self._dwell_state: dict[str, _DwellEntry] = {}
 
     def emit(self, analysis: ProcessedFrameAnalysis, pretty: bool) -> None:
         with self._emit_lock:
             indent = 2 if pretty else None
             print(json.dumps(analysis.payload, ensure_ascii=False, indent=indent))
 
-            updates = self._collect_updates(analysis.sections)
+            # 카메라별 zone 오프셋 결정
+            zone_offset = 0
+            try:
+                source = analysis.payload.get("source", {})
+                cam_value = str(source.get("value", ""))
+                zone_offset = self._zone_offsets.get(cam_value, 0)
+            except Exception:
+                cam_value = ""
+                zone_offset = 0
+
+            updates = self._collect_updates(analysis.sections, zone_offset, self._section_zones.get(cam_value))
+            now = time.monotonic()
             for update in updates:
-                if not self._is_cooldown_elapsed(update.plate):
+                if not self._is_dwell_elapsed(update.plate, update.zone, now):
+                    continue
+                if not self._is_cooldown_elapsed(update.plate, update.zone):
                     continue
 
                 try:
+                    # 구역 정보는 이미지 업로드보다 먼저 반영한다. Blob 업로드가 느려도 Temi 안내가 밀리지 않게 한다.
+                    self._send_to_firebase(update, "")
                     image_url = self._build_image_url(update)
-                    self._send_to_firebase(update, image_url)
+                    if image_url:
+                        self._send_to_firebase(update, image_url)
                     self._send_to_server(update, image_url)
-                    self._last_sent[update.plate] = time.monotonic()
+                    self._last_sent[(update.plate, update.zone)] = now
                 except Exception as exc:
                     print(f"Publish error: {exc}", file=sys.stderr)
 
-    def _collect_updates(self, sections: list[ProcessedSectionResult]) -> list[PlateUpdate]:
+    def _collect_updates(
+        self,
+        sections: list[ProcessedSectionResult],
+        zone_offset: int = 0,
+        section_zones: list[str] | None = None,
+    ) -> list[PlateUpdate]:
         updates: dict[str, PlateUpdate] = {}
         for section in sections:
             result = section.result
@@ -262,9 +300,15 @@ class PlateUpdateDispatcher:
             if plate in updates:
                 continue
 
+            zone = self._zone_from_index(result.section_index + zone_offset)
+            if section_zones is not None and result.section_index < len(section_zones):
+                configured_zone = section_zones[result.section_index].strip().upper()
+                if configured_zone:
+                    zone = configured_zone
+
             updates[plate] = PlateUpdate(
                 plate=plate,
-                zone=self._zone_from_index(result.section_index),
+                zone=zone,
                 last4=self._last_four_digits(plate),
                 image=section.rectified_plate,
             )
@@ -300,10 +344,28 @@ class PlateUpdateDispatcher:
             return
         self._firebase_publisher.publish(update, image_url)
 
-    def _is_cooldown_elapsed(self, plate: str) -> bool:
+    def _is_dwell_elapsed(self, plate: str, zone: str, now: float) -> bool:
+        """같은 구역에서 dwell_seconds 이상 연속 감지됐는지 확인."""
+        if self._dwell_seconds <= 0:
+            return True
+        entry = self._dwell_state.get(plate)
+        gap_tolerance = max(self._dwell_seconds * 2, 15.0)
+        if entry is None or entry.zone != zone or (now - entry.last_seen) > gap_tolerance:
+            # 처음 감지되거나 구역이 바뀌었거나 너무 오래 안 보였으면 타이머 리셋
+            self._dwell_state[plate] = _DwellEntry(zone=zone, first_seen=now, last_seen=now)
+            return False
+        entry.last_seen = now
+        elapsed = entry.last_seen - entry.first_seen
+        if elapsed >= self._dwell_seconds:
+            print(f"[dwell] {plate} → {zone}구역 {elapsed:.1f}s 정지 → 주차 확정", file=sys.stderr)
+            return True
+        print(f"[dwell] {plate} {zone}구역 대기 중 ({elapsed:.1f}s / {self._dwell_seconds}s)", file=sys.stderr)
+        return False
+
+    def _is_cooldown_elapsed(self, plate: str, zone: str) -> bool:
         if self._cooldown_seconds <= 0:
             return True
-        previous = self._last_sent.get(plate)
+        previous = self._last_sent.get((plate, zone))
         if previous is None:
             return True
         return (time.monotonic() - previous) >= self._cooldown_seconds

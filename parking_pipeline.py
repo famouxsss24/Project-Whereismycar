@@ -21,16 +21,16 @@ from plate_publish import (
     normalize_firebase_database_url,
     resolve_project_id_from_service_account,
 )
-from parking_types import Box, ProcessedFrameAnalysis
+from parking_types import Box, ProcessedFrameAnalysis, SectionSpec
 from plate_detection import divide_into_sections, resolve_default_yolo_model
 from plate_ocr import load_image
-from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, ScanAreaSelector, draw_crop_debug_window, draw_preview_frame
+from preview_windows import WINDOW_NAME, ScanAreaSelector, draw_crop_debug_window, draw_preview_frame
 
 
 DEFAULT_SETTINGS_PATH = Path("settings.json")
 
 
-def open_camera(camera_index: int) -> cv2.VideoCapture:
+def open_camera(camera_index: int, width: int = 0, height: int = 0, fps: float = 0.0) -> cv2.VideoCapture:
     backend = cv2.CAP_DSHOW if os.name == "nt" and hasattr(cv2, "CAP_DSHOW") else cv2.CAP_ANY
     capture = cv2.VideoCapture(camera_index, backend)
     if not capture.isOpened():
@@ -38,13 +38,21 @@ def open_camera(camera_index: int) -> cv2.VideoCapture:
         capture = cv2.VideoCapture(camera_index)
     if not capture.isOpened():
         raise RuntimeError(f"Unable to open webcam index {camera_index}.")
+    if hasattr(cv2, "CAP_PROP_FOURCC"):
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if width > 0:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    if height > 0:
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if fps > 0:
+        capture.set(cv2.CAP_PROP_FPS, fps)
     if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
         capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return capture
 
 
-def capture_webcam_frame(camera_index: int) -> np.ndarray:
-    capture = open_camera(camera_index)
+def capture_webcam_frame(camera_index: int, width: int = 0, height: int = 0, fps: float = 0.0) -> np.ndarray:
+    capture = open_camera(camera_index, width, height, fps)
     try:
         ok, frame = capture.read()
         if not ok or frame is None:
@@ -161,6 +169,19 @@ def _as_optional_str(value: object, key: str) -> str | None:
     raise ValueError(f"Setting `{key}` must be a string or null.")
 
 
+def _as_str_list(value: object, key: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"Setting `{key}` must be a list of strings.")
+    items: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"Setting `{key}` item #{index + 1} must be a string.")
+        items.append(item)
+    return items
+
+
 def _normalize_section_box_settings(value: object, key: str = "section_boxes") -> list[str]:
     if value is None:
         return []
@@ -258,6 +279,12 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
             if camera_index < 0:
                 raise ValueError("Setting `camera` must be >= 0.")
             defaults["camera"] = [camera_index]
+    if "camera_width" in raw_settings:
+        defaults["camera_width"] = _as_int(raw_settings["camera_width"], "camera_width")
+    if "camera_height" in raw_settings:
+        defaults["camera_height"] = _as_int(raw_settings["camera_height"], "camera_height")
+    if "camera_fps" in raw_settings:
+        defaults["camera_fps"] = _as_float(raw_settings["camera_fps"], "camera_fps")
     if "sections" in raw_settings:
         defaults["sections"] = _as_int(raw_settings["sections"], "sections")
     if "--section-box" not in cli_argv:
@@ -267,6 +294,18 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
             defaults["camera_section_boxes"] = _normalize_camera_section_box_settings(
                 raw_settings["camera_section_boxes"]
             )
+    if "zone_offsets" in raw_settings:
+        raw_offsets = raw_settings["zone_offsets"]
+        if isinstance(raw_offsets, dict):
+            defaults["zone_offsets"] = {str(k): int(v) for k, v in raw_offsets.items()}
+    if "section_zones" in raw_settings:
+        raw_section_zones = raw_settings["section_zones"]
+        if isinstance(raw_section_zones, dict):
+            defaults["section_zones"] = {
+                str(camera_index): [str(zone).strip().upper() for zone in zones]
+                for camera_index, zones in raw_section_zones.items()
+                if isinstance(zones, list)
+            }
     if "detector" in raw_settings:
         detector = _as_optional_str(raw_settings["detector"], "detector")
         if detector not in ("heuristic", "yolo"):
@@ -325,12 +364,16 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         defaults["interval"] = _as_float(raw_settings["interval"], "interval")
     if "plate_cooldown" in raw_settings:
         defaults["plate_cooldown"] = _as_float(raw_settings["plate_cooldown"], "plate_cooldown")
+    if "dwell_seconds" in raw_settings:
+        defaults["dwell_seconds"] = _as_float(raw_settings["dwell_seconds"], "dwell_seconds")
     if "loop" in raw_settings:
         defaults["loop"] = _as_bool(raw_settings["loop"], "loop")
     if "preview" in raw_settings:
         defaults["preview"] = _as_bool(raw_settings["preview"], "preview")
     if "pretty" in raw_settings:
         defaults["pretty"] = _as_bool(raw_settings["pretty"], "pretty")
+    if "known_plates" in raw_settings:
+        defaults["known_plates"] = _as_str_list(raw_settings["known_plates"], "known_plates")
 
     return defaults
 
@@ -339,15 +382,8 @@ def process_webcam_frame(
     processor: ParkingLotProcessor,
     frame: np.ndarray,
     camera_index: int,
-    dispatcher: PlateUpdateDispatcher,
-    pretty: bool,
 ) -> ProcessedFrameAnalysis:
-    analysis = processor.process_frame(frame, "webcam", str(camera_index))
-    try:
-        dispatcher.emit(analysis, pretty)
-    except Exception as exc:  # pragma: no cover - live preview path
-        print(f"Publish error: {exc}", file=sys.stderr)
-    return analysis
+    return processor.process_frame(frame, "webcam", str(camera_index))
 
 
 def load_azure_secrets(path_value: str | None) -> dict[str, object]:
@@ -394,6 +430,9 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
         "--cameras",
         help="Comma-separated webcam indexes, for example 0,1. Overrides --camera.",
     )
+    parser.add_argument("--camera-width", type=int, default=0, help="Requested webcam width in pixels. Default: camera default.")
+    parser.add_argument("--camera-height", type=int, default=0, help="Requested webcam height in pixels. Default: camera default.")
+    parser.add_argument("--camera-fps", type=float, default=0.0, help="Requested webcam FPS. Default: camera default.")
     parser.add_argument("--sections", type=int, default=3, help="Number of parking sections. Default: 3.")
     parser.add_argument(
         "--section-box",
@@ -498,9 +537,22 @@ def build_parser(defaults: dict[str, object] | None = None) -> argparse.Argument
         default=30.0,
         help="Seconds to suppress duplicate updates for the same plate. Default: 30.",
     )
+    parser.add_argument(
+        "--dwell-seconds",
+        type=float,
+        default=5.0,
+        help="Seconds a plate must stay in the same zone before being written to Firebase. Default: 5.",
+    )
     parser.add_argument("--loop", action="store_true", help="Continuously process webcam frames.")
     parser.add_argument("--preview", action="store_true", help="Show live preview and crop debug windows.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print the JSON output.")
+    parser.add_argument(
+        "--known-plate",
+        action="append",
+        dest="known_plates",
+        default=[],
+        help="Known demo/test plate used to correct OCR when Hangul is missed. Repeatable.",
+    )
     if defaults:
         parser.set_defaults(**defaults)
     return parser
@@ -553,6 +605,9 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
             port=args.local_image_server_port,
         )
 
+    zone_offsets = getattr(args, "zone_offsets", None) or {}
+    section_zones = getattr(args, "section_zones", None) or {}
+    dwell_seconds = getattr(args, "dwell_seconds", 5.0)
     return PlateUpdateDispatcher(
         server_url=args.server_url,
         timeout=args.timeout,
@@ -560,6 +615,9 @@ def build_dispatcher(args: argparse.Namespace) -> PlateUpdateDispatcher:
         firebase_publisher=firebase_publisher,
         local_image_publisher=local_image_publisher,
         azure_image_publisher=azure_image_publisher,
+        zone_offsets=zone_offsets,
+        section_zones=section_zones,
+        dwell_seconds=dwell_seconds,
     )
 
 
@@ -589,6 +647,7 @@ def build_processor(
         yolo_confidence=args.yolo_conf,
         yolo_image_size=args.yolo_imgsz,
         allow_yolo_fallback=not args.yolo_only,
+        known_plates=args.known_plates,
     )
 
 
@@ -604,11 +663,16 @@ def build_processors(
     }
 
 
-def open_cameras(camera_indexes: list[int]) -> dict[int, cv2.VideoCapture]:
+def open_cameras(
+    camera_indexes: list[int],
+    width: int = 0,
+    height: int = 0,
+    fps: float = 0.0,
+) -> dict[int, cv2.VideoCapture]:
     captures: dict[int, cv2.VideoCapture] = {}
     try:
         for camera_index in camera_indexes:
-            captures[camera_index] = open_camera(camera_index)
+            captures[camera_index] = open_camera(camera_index, width, height, fps)
         return captures
     except Exception:
         for capture in captures.values():
@@ -669,7 +733,7 @@ def run_once(
 ) -> int:
     if args.webcam:
         for camera_index in camera_indexes:
-            frame = capture_webcam_frame(camera_index)
+            frame = capture_webcam_frame(camera_index, args.camera_width, args.camera_height, args.camera_fps)
             analysis = processors[camera_index].process_frame(frame, "webcam", str(camera_index))
             dispatcher.emit(analysis, args.pretty)
         return 0
@@ -691,7 +755,7 @@ def run_loop(
     dispatcher: PlateUpdateDispatcher,
     camera_indexes: list[int],
 ) -> int:
-    captures = open_cameras(camera_indexes)
+    captures = open_cameras(camera_indexes, args.camera_width, args.camera_height, args.camera_fps)
     try:
         while True:
             for camera_index, capture in captures.items():
@@ -710,18 +774,165 @@ def run_loop(
 class PreviewCameraState:
     processor: ParkingLotProcessor
     selector: ScanAreaSelector
-    window_name: str
-    crop_window_name: str
     latest_analysis: ProcessedFrameAnalysis | None = None
     latest_error: str | None = None
     last_completed_at: float | None = None
     last_submission_at: float = 0.0
     pending: concurrent.futures.Future[ProcessedFrameAnalysis] | None = None
+    pending_revision: int | None = None
+    scan_revision: int = 0
     selector_initialized: bool = False
+    crop_debug_display: np.ndarray | None = None
+    crop_debug_signature: tuple[int | None, tuple[tuple[str, Box], ...]] | None = None
+
+
+@dataclass
+class DashboardItem:
+    camera_index: int
+    preview: np.ndarray
+    crop_debug: np.ndarray
+
+
+@dataclass
+class DashboardHitRegion:
+    camera_index: int
+    left: int
+    top: int
+    right: int
+    bottom: int
+    scale: float
 
 
 def preview_window_name(base_name: str, camera_index: int, multi_camera: bool) -> str:
     return f"{base_name} - Camera {camera_index}" if multi_camera else base_name
+
+
+def resize_with_scale(image: np.ndarray, max_width: int, max_height: int) -> tuple[np.ndarray, float]:
+    height, width = image.shape[:2]
+    if height == 0 or width == 0:
+        return np.zeros((max_height, max_width, 3), dtype=np.uint8), 1.0
+
+    scale = min(max_width / width, max_height / height, 1.0)
+    new_width = max(1, int(width * scale))
+    new_height = max(1, int(height * scale))
+    if new_width == width and new_height == height:
+        return image, 1.0
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+    return cv2.resize(image, (new_width, new_height), interpolation=interpolation), scale
+
+
+def paste_image(canvas: np.ndarray, image: np.ndarray, x: int, y: int) -> None:
+    height, width = image.shape[:2]
+    canvas[y:y + height, x:x + width] = image
+
+
+def build_preview_dashboard(items: list[DashboardItem]) -> tuple[np.ndarray, dict[int, DashboardHitRegion]]:
+    if not items:
+        return np.zeros((360, 640, 3), dtype=np.uint8), {}
+
+    max_preview_width = 640
+    max_preview_height = 480
+    max_crop_width = 640
+    max_crop_height = 260
+    padding = 8
+    gap = 12
+    title_height = 28
+    columns = min(2, len(items))
+
+    prepared = []
+    for item in items:
+        preview, preview_scale = resize_with_scale(item.preview, max_preview_width, max_preview_height)
+        crop_debug, _ = resize_with_scale(item.crop_debug, max_crop_width, max_crop_height)
+        tile_width = max(preview.shape[1], crop_debug.shape[1]) + padding * 2
+        tile_height = title_height + preview.shape[0] + crop_debug.shape[0] + padding * 3
+        prepared.append((item, preview, preview_scale, crop_debug, tile_width, tile_height))
+
+    rows = [prepared[index:index + columns] for index in range(0, len(prepared), columns)]
+    column_widths = [
+        max(row[column][4] for row in rows if column < len(row))
+        for column in range(columns)
+    ]
+    row_heights = [max(tile[5] for tile in row) for row in rows]
+
+    canvas_width = sum(column_widths) + gap * (columns + 1)
+    canvas_height = sum(row_heights) + gap * (len(rows) + 1)
+    canvas = np.full((canvas_height, canvas_width, 3), 28, dtype=np.uint8)
+    hit_regions: dict[int, DashboardHitRegion] = {}
+
+    cursor_y = gap
+    for row_index, row in enumerate(rows):
+        cursor_x = gap
+        for column_index, tile in enumerate(row):
+            item, preview, preview_scale, crop_debug, tile_width, tile_height = tile
+            tile_left = cursor_x
+            tile_top = cursor_y
+            tile_right = tile_left + column_widths[column_index]
+            tile_bottom = tile_top + row_heights[row_index]
+            cv2.rectangle(canvas, (tile_left, tile_top), (tile_right - 1, tile_bottom - 1), (55, 55, 55), 1)
+            cv2.putText(
+                canvas,
+                f"Camera {item.camera_index}",
+                (tile_left + padding, tile_top + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (230, 230, 230),
+                2,
+                cv2.LINE_AA,
+            )
+
+            preview_x = tile_left + padding
+            preview_y = tile_top + title_height + padding
+            crop_x = tile_left + padding
+            crop_y = preview_y + preview.shape[0] + padding
+            paste_image(canvas, preview, preview_x, preview_y)
+            paste_image(canvas, crop_debug, crop_x, crop_y)
+            hit_regions[item.camera_index] = DashboardHitRegion(
+                camera_index=item.camera_index,
+                left=preview_x,
+                top=preview_y,
+                right=preview_x + preview.shape[1],
+                bottom=preview_y + preview.shape[0],
+                scale=preview_scale,
+            )
+
+            cursor_x += column_widths[column_index] + gap
+        cursor_y += row_heights[row_index] + gap
+
+    return canvas, hit_regions
+
+
+def section_specs_signature(
+    latest_analysis: ProcessedFrameAnalysis | None,
+    section_specs: list[SectionSpec],
+) -> tuple[int | None, tuple[tuple[str, Box], ...]]:
+    analysis_id = id(latest_analysis) if latest_analysis is not None else None
+    specs_signature = tuple(
+        (spec.section_id, spec.box)
+        for spec in section_specs
+    )
+    return (analysis_id, specs_signature)
+
+
+def zone_from_index(section_index: int) -> str:
+    if 0 <= section_index < 26:
+        return chr(ord("A") + section_index)
+    return f"Z{section_index + 1}"
+
+
+def section_zone_labels(args: argparse.Namespace, camera_index: int, section_specs: list[SectionSpec]) -> dict[str, str]:
+    section_zones = getattr(args, "section_zones", None) or {}
+    camera_section_zones = section_zones.get(str(camera_index))
+    zone_offsets = getattr(args, "zone_offsets", None) or {}
+    zone_offset = zone_offsets.get(str(camera_index), 0)
+    labels: dict[str, str] = {}
+    for spec in section_specs:
+        label = zone_from_index(spec.index + zone_offset)
+        if camera_section_zones is not None and spec.index < len(camera_section_zones):
+            configured_label = str(camera_section_zones[spec.index]).strip().upper()
+            if configured_label:
+                label = configured_label
+        labels[spec.section_id] = label
+    return labels
 
 
 def initial_scan_boxes(
@@ -742,27 +953,62 @@ def run_preview_loop(
     configured_section_boxes_by_camera: dict[int, list[Box] | None],
     settings_path: Path,
 ) -> int:
-    captures = open_cameras(camera_indexes)
-    multi_camera = len(camera_indexes) > 1
+    captures = open_cameras(camera_indexes, args.camera_width, args.camera_height, args.camera_fps)
     states: dict[int, PreviewCameraState] = {}
+    hit_regions: dict[int, DashboardHitRegion] = {}
+    active_drag_camera: list[int | None] = [None]
+
+    def map_dashboard_point(region: DashboardHitRegion, x: int, y: int) -> tuple[int, int]:
+        frame_x = int(round((x - region.left) / region.scale))
+        frame_y = int(round((y - region.top) / region.scale))
+        return (frame_x, frame_y)
+
+    def dashboard_mouse_callback(event: int, x: int, y: int, flags: int, userdata: object | None = None) -> None:
+        camera_index = active_drag_camera[0]
+        region = hit_regions.get(camera_index) if camera_index is not None else None
+
+        if event == cv2.EVENT_LBUTTONDOWN:
+            camera_index = None
+            region = None
+            for candidate_index, candidate_region in hit_regions.items():
+                if (
+                    candidate_region.left <= x < candidate_region.right
+                    and candidate_region.top <= y < candidate_region.bottom
+                ):
+                    camera_index = candidate_index
+                    region = candidate_region
+                    active_drag_camera[0] = candidate_index
+                    break
+
+        if camera_index is None or region is None:
+            return
+
+        state = states.get(camera_index)
+        if state is None:
+            return
+
+        frame_x, frame_y = map_dashboard_point(region, x, y)
+        state.selector.mouse_callback(event, frame_x, frame_y, flags, userdata)
+        if event == cv2.EVENT_LBUTTONUP:
+            active_drag_camera[0] = None
 
     for camera_index in camera_indexes:
         selector = ScanAreaSelector()
-        window_name = preview_window_name(WINDOW_NAME, camera_index, multi_camera)
-        crop_window_name = preview_window_name(CROP_WINDOW_NAME, camera_index, multi_camera)
-        cv2.namedWindow(window_name)
-        cv2.setMouseCallback(window_name, selector.mouse_callback)
+        selector.set_max_boxes(args.sections)
         states[camera_index] = PreviewCameraState(
             processor=processors[camera_index],
             selector=selector,
-            window_name=window_name,
-            crop_window_name=crop_window_name,
         )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(camera_indexes))) as executor:
+    cv2.namedWindow(WINDOW_NAME)
+    cv2.setMouseCallback(WINDOW_NAME, dashboard_mouse_callback)
+
+    worker_count = max(1, len(camera_indexes))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         try:
             while True:
                 now = time.monotonic()
+                dashboard_items: list[DashboardItem] = []
                 for camera_index, capture in captures.items():
                     state = states[camera_index]
                     ok, frame = capture.read()
@@ -783,28 +1029,49 @@ def run_preview_loop(
                     if state.selector.consume_changed():
                         state.processor.set_section_boxes(state.selector.boxes)
                         save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
+                        state.scan_revision += 1
+                        state.latest_error = None
+                        state.last_submission_at = 0.0
+                        if state.pending is not None and not state.pending.done():
+                            state.pending.cancel()
+                        state.pending = None
+                        state.pending_revision = None
+                        state.crop_debug_display = None
+                        state.crop_debug_signature = None
 
                     if state.pending is not None and state.pending.done():
                         try:
-                            state.latest_analysis = state.pending.result()
-                            state.latest_error = None
-                            state.last_completed_at = now
+                            analysis = state.pending.result()
+                            if state.pending_revision == state.scan_revision:
+                                try:
+                                    dispatcher.emit(analysis, args.pretty)
+                                except Exception as exc:  # pragma: no cover - live preview path
+                                    print(f"Publish error: {exc}", file=sys.stderr)
+                                state.latest_analysis = analysis
+                                state.latest_error = None
+                                state.last_completed_at = now
                         except Exception as exc:  # pragma: no cover - live preview path
-                            state.latest_error = str(exc)
+                            if state.pending_revision == state.scan_revision:
+                                state.latest_error = str(exc)
                         state.pending = None
+                        state.pending_revision = None
 
-                    if state.pending is None and now - state.last_submission_at >= args.interval:
+                    if (
+                        state.pending is None
+                        and not state.selector.is_dragging
+                        and now - state.last_submission_at >= args.interval
+                    ):
                         state.pending = executor.submit(
                             process_webcam_frame,
                             state.processor,
                             frame.copy(),
                             camera_index,
-                            dispatcher,
-                            args.pretty,
                         )
+                        state.pending_revision = state.scan_revision
                         state.last_submission_at = now
 
                     section_specs = state.processor.get_section_specs(frame.shape)
+                    section_labels = section_zone_labels(args, camera_index, section_specs)
                     latest_analysis = state.latest_analysis
                     latest_payload = latest_analysis.payload if latest_analysis is not None else None
                     display = draw_preview_frame(
@@ -815,13 +1082,28 @@ def run_preview_loop(
                         last_completed_at=None if state.last_completed_at is None else now - state.last_completed_at,
                         latest_error=state.latest_error,
                         draft_box=state.selector.draft_box,
+                        section_labels=section_labels,
                     )
-                    crop_debug_display = draw_crop_debug_window(
-                        processed_sections=latest_analysis.sections if latest_analysis is not None else [],
-                        section_specs=section_specs,
+                    crop_debug_signature = section_specs_signature(latest_analysis, section_specs)
+                    if state.crop_debug_signature != crop_debug_signature or state.crop_debug_display is None:
+                        state.crop_debug_display = draw_crop_debug_window(
+                            processed_sections=latest_analysis.sections if latest_analysis is not None else [],
+                            section_specs=section_specs,
+                            section_labels=section_labels,
+                        )
+                        state.crop_debug_signature = crop_debug_signature
+                    dashboard_items.append(
+                        DashboardItem(
+                            camera_index=camera_index,
+                            preview=display,
+                            crop_debug=state.crop_debug_display,
+                        )
                     )
-                    cv2.imshow(state.window_name, display)
-                    cv2.imshow(state.crop_window_name, crop_debug_display)
+
+                dashboard_display, next_hit_regions = build_preview_dashboard(dashboard_items)
+                hit_regions.clear()
+                hit_regions.update(next_hit_regions)
+                cv2.imshow(WINDOW_NAME, dashboard_display)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
