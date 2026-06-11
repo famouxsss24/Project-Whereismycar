@@ -60,6 +60,7 @@
 
         <!-- 타이틀 -->
         <TextView
+            android:id="@+id/tvTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="🚗 내 차로"
@@ -175,13 +176,25 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="📺 광고 시청 중 (스킵 불가)"
+            android:text="📺 광고 시청 중"
             android:textSize="15sp"
             android:textColor="#FFFFFF"
             android:background="#99000000"
             android:padding="10dp"
             android:layout_gravity="top|start"
             android:layout_margin="16dp"/>
+
+        <!-- 광고 스킵 버튼 -->
+        <Button
+            android:id="@+id/btnSkipAd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="건너뛰기 ▶▶"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#99000000"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="24dp"/>
 
     </FrameLayout>
 
@@ -322,37 +335,18 @@
 
     </FrameLayout>
 
-    <!-- ═══════════════ 6) 카카오페이 WebView 오버레이 ═══════════════ -->
+    <!-- ═══════════════ 6) 내차로페이 결제 오버레이 (전체화면) ═══════════════ -->
     <FrameLayout
         android:id="@+id/layoutWebViewContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#CC3C3237"
-        android:padding="40dp"
+        android:background="#FFFFFF"
         android:visibility="gone">
 
-        <LinearLayout
+        <WebView
+            android:id="@+id/paymentWebView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:background="#FFFFFF">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:text="내차로 결제 — 카카오페이"
-                android:textColor="#3C3237"
-                android:textStyle="bold"
-                android:textSize="20sp"
-                android:gravity="center"
-                android:background="#FFEB3B"/>
-
-            <WebView
-                android:id="@+id/paymentWebView"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
-        </LinearLayout>
+            android:layout_height="match_parent" />
     </FrameLayout>
 
 </FrameLayout>

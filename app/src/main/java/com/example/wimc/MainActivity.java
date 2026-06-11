@@ -75,7 +75,7 @@ public class MainActivity extends Activity
     private static final int    QUIZ_REWARD_POINTS = 100;
     private static final String CORRECT_ANSWER = "진라면";
     private static final String KAKAO_CID = "TC0ONETIME";
-    private static final String KAKAO_SECRET_KEY = "DEV82A2E59C77561B30D980F16DBBF4390B2252A";
+    private static final String KAKAO_SECRET_KEY = "DEVB2C0DE4A9F97D8EF7CA476F04D83560429C7D";
     private static final String KAKAO_READY_URL  = "https://open-api.kakaopay.com/online/v1/payment/ready";
     private static final String KAKAO_APPROVAL_URL = "https://wimc.local/payment/success";
     private static final String KAKAO_CANCEL_URL = "https://wimc.local/payment/cancel";
@@ -111,6 +111,8 @@ public class MainActivity extends Activity
     static {
         java.util.Map<String, String> ko = new java.util.HashMap<>();
         ko.put("subtitle", "차량 번호판 뒷 4자리를 입력해 주세요");
+        ko.put("title", "🚗 내 차로");
+        ko.put("ad_skip", "건너뛰기 ▶▶");
         ko.put("search", "차량 찾기");
         ko.put("ready", "Temi 준비 완료");
         ko.put("waiting", "Temi 연결 대기 중...");
@@ -134,7 +136,7 @@ public class MainActivity extends Activity
         ko.put("tts_correct", "정답입니다. 100 포인트가 적립되었습니다.");
         ko.put("wrong", "오답이지만 광고 시청 30% 할인은 그대로 적용됩니다.");
         ko.put("tts_wrong", "오답입니다. 하지만 광고 시청 할인은 적용됩니다.");
-        ko.put("pay_ing", "카카오페이 결제 진행 중...");
+        ko.put("pay_ing", "내차로페이 결제 진행 중...");
         ko.put("tts_paid", "결제가 완료되었습니다. 안전 운전 하세요.");
         ko.put("paid_done", "결제 완료 — 안전 운전 하세요");
         ko.put("tts_return", "대기 위치로 복귀하겠습니다.");
@@ -143,6 +145,8 @@ public class MainActivity extends Activity
 
         java.util.Map<String, String> en = new java.util.HashMap<>();
         en.put("subtitle", "Enter the last 4 digits of your plate");
+        en.put("title", "🚗 Where's My Car");
+        en.put("ad_skip", "Skip ▶▶");
         en.put("search", "Find My Car");
         en.put("ready", "Temi Ready");
         en.put("waiting", "Connecting to Temi...");
@@ -166,7 +170,7 @@ public class MainActivity extends Activity
         en.put("tts_correct", "Correct. 100 points have been earned.");
         en.put("wrong", "Wrong, but the 30% ad discount still applies.");
         en.put("tts_wrong", "Wrong answer. But the ad discount still applies.");
-        en.put("pay_ing", "Processing KakaoPay payment...");
+        en.put("pay_ing", "Processing WIMC Pay...");
         en.put("tts_paid", "Payment complete. Drive safely.");
         en.put("paid_done", "Payment complete — Drive safely");
         en.put("tts_return", "Returning to standby position.");
@@ -175,6 +179,8 @@ public class MainActivity extends Activity
 
         java.util.Map<String, String> ja = new java.util.HashMap<>();
         ja.put("subtitle", "ナンバープレート末尾4桁を入力してください");
+        ja.put("title", "🚗 私の車はどこ");
+        ja.put("ad_skip", "スキップ ▶▶");
         ja.put("search", "車を探す");
         ja.put("ready", "Temi 準備完了");
         ja.put("waiting", "Temi 接続待機中...");
@@ -198,7 +204,7 @@ public class MainActivity extends Activity
         ja.put("tts_correct", "正解です。100ポイントが貯まりました。");
         ja.put("wrong", "不正解ですが、広告視聴30%割引は適用されます。");
         ja.put("tts_wrong", "不正解です。ですが広告割引は適用されます。");
-        ja.put("pay_ing", "カカオペイ決済処理中...");
+        ja.put("pay_ing", "WIMC Pay 決済処理中...");
         ja.put("tts_paid", "決済が完了しました。安全運転を。");
         ja.put("paid_done", "決済完了 — 安全運転を");
         ja.put("tts_return", "待機位置に戻ります。");
@@ -207,6 +213,8 @@ public class MainActivity extends Activity
 
         java.util.Map<String, String> zh = new java.util.HashMap<>();
         zh.put("subtitle", "请输入车牌号后四位");
+        zh.put("title", "🚗 我的车在哪");
+        zh.put("ad_skip", "跳过 ▶▶");
         zh.put("search", "查找车辆");
         zh.put("ready", "Temi 准备就绪");
         zh.put("waiting", "正在连接 Temi...");
@@ -230,7 +238,7 @@ public class MainActivity extends Activity
         zh.put("tts_correct", "答对了。已获得100积分。");
         zh.put("wrong", "答错了，但广告30%折扣仍然适用。");
         zh.put("tts_wrong", "答错了。但广告折扣仍然适用。");
-        zh.put("pay_ing", "正在处理 KakaoPay 支付...");
+        zh.put("pay_ing", "正在处理 WIMC Pay 支付...");
         zh.put("tts_paid", "支付完成。请安全驾驶。");
         zh.put("paid_done", "支付完成 — 请安全驾驶");
         zh.put("tts_return", "正在返回待机位置。");
@@ -256,6 +264,7 @@ public class MainActivity extends Activity
     private int finalFee = 0;
     private boolean adWatched = false;
     private boolean quizCorrect = false;
+    private boolean awaitingAdAfterTts = false;   // 도착 음성안내 종료 후 광고 재생 대기
 
     // UI 참조 (다국어 갱신용)
     private TextView tvSubtitle;
@@ -350,6 +359,8 @@ public class MainActivity extends Activity
                     Color.parseColor(langs[i].equals(lang) ? "#FFE0D8" : "#FFFFFF")));
         }
         // UI 텍스트 갱신
+        ((TextView) findViewById(R.id.tvTitle)).setText(t("title"));
+        ((Button) findViewById(R.id.btnSkipAd)).setText(t("ad_skip"));
         tvSubtitle.setText(t("subtitle"));
         btnSearchRef.setText(t("search"));
         tvSelectLabel.setText(t("select"));
@@ -385,6 +396,11 @@ public class MainActivity extends Activity
         videoView.setVideoURI(Uri.parse(videoPath));
         videoView.setOnPreparedListener(mp -> mp.setLooping(false));
         videoView.setOnCompletionListener(mp -> onAdComplete());
+        // 광고 스킵 버튼 → 영상 중단하고 퀴즈로
+        findViewById(R.id.btnSkipAd).setOnClickListener(v -> {
+            videoView.stopPlayback();
+            onAdComplete();
+        });
     }
 
     @Override
@@ -502,9 +518,10 @@ public class MainActivity extends Activity
             mainLayout.setVisibility(View.GONE);
             navLayout.setVisibility(View.GONE);
             adLayout.setVisibility(View.VISIBLE);
-            adWatched = true;   // 도착 후 강제 광고이므로 시청 = 30% 할인 자동 적용
+            adWatched = true;   // 도착 후 광고 → 30% 할인 자동 적용
+            // 음성안내는 이미 끝난 상태 → 광고 영상만 재생(음성·영상 겹침 방지)
+            videoView.seekTo(0);
             videoView.start();
-            speak(t("ad_watch"));
         });
     }
 
@@ -563,64 +580,70 @@ public class MainActivity extends Activity
         });
     }
 
-    // ─── 카카오페이 결제 준비 요청 ─────────────────────────────────
+    // ─── 결제 화면 표시 (자체 간편결제 '내차로페이', 토스 스타일 데모) ───────────
+    // 외부 결제 API/제휴 없이 동작하는 자체 결제 UI. 실제 돈은 오가지 않는다.
+    // [결제하기] → payment/success URL → 기존 WebView 가로채기 → handlePaymentSuccess()
+    // [X / 취소] → payment/cancel → handlePaymentFailure()
     private void requestKakaoPay(int amount, String zone) {
-        // 카카오페이는 total_amount가 0이면 거절한다 → 최소 결제 금액 보장
         final int payAmount = Math.max(amount, 100);
-        runOnUiThread(() -> updateStatus(t("pay_ing")));
-        new Thread(() -> {
-            try {
-                URL url = new URL(KAKAO_READY_URL);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Authorization", "SECRET_KEY " + KAKAO_SECRET_KEY);
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
+        final String zoneLabel = (zone == null ? "" : zone) + t("zone_suffix");
+        runOnUiThread(() -> {
+            updateStatus(t("pay_ing"));
+            layoutWebViewContainer.setVisibility(View.VISIBLE);
+            paymentWebView.loadDataWithBaseURL(
+                    KAKAO_APPROVAL_URL, buildWimcPayHtml(payAmount, zoneLabel),
+                    "text/html", "UTF-8", null);
+        });
+    }
 
-                JSONObject params = new JSONObject();
-                params.put("cid", KAKAO_CID);
-                params.put("partner_order_id", "WIMC_" + System.currentTimeMillis());
-                params.put("partner_user_id", "WIMC_CUSTOMER");
-                params.put("item_name", "내차로 주차 정산 (" + zone + " 구역)");
-                params.put("quantity", 1);
-                params.put("total_amount", payAmount);
-                params.put("tax_free_amount", 0);
-                params.put("approval_url", KAKAO_APPROVAL_URL);
-                params.put("cancel_url", KAKAO_CANCEL_URL);
-                params.put("fail_url", KAKAO_FAIL_URL);
-
-                OutputStream os = conn.getOutputStream();
-                os.write(params.toString().getBytes("UTF-8"));
-                os.flush();
-                os.close();
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode == 200) {
-                    String response = readResponseBody(conn.getInputStream());
-                    JSONObject json = new JSONObject(response);
-                    String redirectUrl = json.getString("next_redirect_mobile_url");
-
-                    runOnUiThread(() -> {
-                        layoutWebViewContainer.setVisibility(View.VISIBLE);
-                        paymentWebView.loadUrl(redirectUrl);
-                    });
-                } else {
-                    InputStream errorStream = conn.getErrorStream();
-                    String errorBody = errorStream != null ? readResponseBody(errorStream) : "";
-                    String message = errorBody.length() > 90 ? errorBody.substring(0, 90) + "..." : errorBody;
-                    runOnUiThread(() -> {
-                        updateNav(currentZone, "결제 API 오류 (" + responseCode + ") " + message);
-                        new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::backToMainScreen, 3000);
-                    });
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                runOnUiThread(() -> {
-                    updateNav(currentZone, "결제 오류: " + e.getMessage());
-                    new Handler(Looper.getMainLooper()).postDelayed(MainActivity.this::backToMainScreen, 3000);
-                });
-            }
-        }).start();
+    // 토스 결제창 느낌의 '내차로페이' 결제 페이지 HTML 생성
+    private String buildWimcPayHtml(int payAmount, String zoneLabel) {
+        String finalText = String.format(Locale.KOREA, "%,d", payAmount);
+        int discount = Math.max(0, originalFee - payAmount);
+        boolean hasDiscount = discount > 0 && originalFee > 0;
+        String origBlock = hasDiscount
+                ? "<div class='orig'>" + String.format(Locale.KOREA, "%,d", originalFee) + "원</div>" : "";
+        String discountRow = hasDiscount
+                ? "<div class='row'><div class='k'>광고 할인</div><div class='v'>-"
+                  + String.format(Locale.KOREA, "%,d", discount) + "원<span class='chev'>›</span></div></div>" : "";
+        return "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            + "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            + "<style>"
+            + "*{margin:0;padding:0;box-sizing:border-box;font-family:'Apple SD Gothic Neo',sans-serif;-webkit-tap-highlight-color:transparent;}"
+            + "body{background:#fff;min-height:100vh;display:flex;flex-direction:column;color:#191F28;}"
+            + ".close{font-size:34px;color:#191F28;padding:20px 26px;width:fit-content;}"
+            + ".top{text-align:center;margin-top:10px;}"
+            + ".merchant{color:#8B95A1;font-size:22px;margin-bottom:16px;}"
+            + ".amount{font-size:66px;font-weight:800;letter-spacing:-1px;}"
+            + ".amount small{font-size:34px;font-weight:800;margin-left:4px;}"
+            + ".orig{color:#B0B8C1;font-size:28px;text-decoration:line-through;margin-top:10px;}"
+            + ".rows{margin-top:56px;padding:0 28px;}"
+            + ".row{display:flex;justify-content:space-between;align-items:center;padding:26px 4px;border-top:1px solid #F2F4F6;font-size:24px;}"
+            + ".row:last-child{border-bottom:1px solid #F2F4F6;}"
+            + ".row .k{color:#4E5968;display:flex;align-items:center;gap:14px;}"
+            + ".row .v{color:#191F28;font-weight:700;display:flex;align-items:center;gap:8px;}"
+            + ".dot{width:42px;height:42px;border-radius:50%;background:#3182F6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;}"
+            + ".chev{color:#C4CDD5;font-size:24px;}"
+            + ".blue{color:#3182F6;}"
+            + ".spacer{flex:1;min-height:40px;}"
+            + ".paybtn{margin:20px 24px 12px;background:#3182F6;color:#fff;border:none;font-size:30px;font-weight:700;padding:28px;border-radius:18px;width:calc(100% - 48px);}"
+            + ".foot{text-align:center;color:#B0B8C1;font-size:20px;padding-bottom:26px;}"
+            + "</style></head><body>"
+            + "<div class='close' onclick=\"location.href='https://wimc.local/payment/cancel'\">✕</div>"
+            + "<div class='top'>"
+            + "<div class='merchant'>내차로 주차 정산 · " + zoneLabel + "</div>"
+            + "<div class='amount'>" + finalText + "<small>원</small></div>"
+            + origBlock
+            + "</div>"
+            + "<div class='rows'>"
+            + "<div class='row'><div class='k'><span class='dot'>내</span>내차로페이</div><div class='v'>간편결제<span class='chev'>›</span></div></div>"
+            + discountRow
+            + "<div class='row'><div class='k'>포인트 적립</div><div class='v blue'>+100P<span class='chev'>›</span></div></div>"
+            + "</div>"
+            + "<div class='spacer'></div>"
+            + "<button class='paybtn' onclick=\"location.href='https://wimc.local/payment/success'\">결제하기</button>"
+            + "<div class='foot'>구매 내용에 동의하면 결제해주세요</div>"
+            + "</body></html>";
     }
 
     private String readResponseBody(InputStream stream) {
@@ -818,9 +841,11 @@ public class MainActivity extends Activity
                     updateNav(location, t("paid_done"));
                     scheduleAutoReturn();
                 } else {
-                    // 미결제 차량 → 광고 영상 자동 재생
+                    // 미결제 차량 → 음성안내가 끝난 뒤 광고 영상 재생
+                    awaitingAdAfterTts = true;
                     speak(location + " " + t("arrived_ad"));
-                    new Handler(Looper.getMainLooper()).postDelayed(this::showAdScreen, 2500);
+                    // TTS 완료 신호가 안 오는 경우 대비한 안전 폴백(최대 10초)
+                    new Handler(Looper.getMainLooper()).postDelayed(this::triggerAdAfterTts, 10000);
                 }
                 break;
             case OnGoToLocationStatusChangedListener.ABORT:
@@ -861,7 +886,19 @@ public class MainActivity extends Activity
     }
 
     @Override
-    public void onTtsStatusChanged(@NonNull TtsRequest ttsRequest) {}
+    public void onTtsStatusChanged(@NonNull TtsRequest ttsRequest) {
+        // 도착 음성안내(TTS)가 끝나면 광고 재생
+        if (awaitingAdAfterTts && ttsRequest.getStatus() == TtsRequest.Status.COMPLETED) {
+            triggerAdAfterTts();
+        }
+    }
+
+    // 음성안내 종료(또는 폴백 타임아웃) 시 광고 화면 1회만 실행
+    private void triggerAdAfterTts() {
+        if (!awaitingAdAfterTts) return;
+        awaitingAdAfterTts = false;
+        runOnUiThread(this::showAdScreen);
+    }
 
     private void speak(String text) {
         try {
