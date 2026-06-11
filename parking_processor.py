@@ -5,7 +5,15 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from parking_types import PlateCandidate, ProcessedFrameAnalysis, ProcessedSectionResult, SectionResult, SectionSpec
+from parking_types import (
+    PlateCandidate,
+    ProcessedFrameAnalysis,
+    ProcessedSectionResult,
+    ScanArea,
+    SectionResult,
+    SectionSpec,
+    section_name_from_index,
+)
 from plate_detection import HeuristicPlateDetector, create_plate_detector, divide_into_sections, enhance_plate_image, expand_box
 from plate_ocr import PlateReader, is_valid_korean_plate
 
@@ -23,6 +31,11 @@ class ParkingLotProcessor:
         allow_yolo_fallback: bool = True,
     ) -> None:
         self._custom_section_boxes = None if section_boxes is None else tuple(section_boxes)
+        self._custom_section_names = (
+            None
+            if self._custom_section_boxes is None
+            else tuple(section_name_from_index(index) for index in range(len(self._custom_section_boxes)))
+        )
         self.section_count = len(self._custom_section_boxes) if self._custom_section_boxes is not None else section_count
         self.layout = "custom" if self._custom_section_boxes is not None else layout
         self.reader = PlateReader()
@@ -34,7 +47,13 @@ class ParkingLotProcessor:
         )
         self.fallback_detector = HeuristicPlateDetector() if detector_name == "yolo" and allow_yolo_fallback else None
         self._section_cache: dict[
-            tuple[tuple[int, ...], int, str, tuple[tuple[int, int, int, int], ...] | None],
+            tuple[
+                tuple[int, ...],
+                int,
+                str,
+                tuple[tuple[int, int, int, int], ...] | None,
+                tuple[str, ...] | None,
+            ],
             list[SectionSpec],
         ] = {}
         self._section_lock = threading.RLock()
@@ -50,6 +69,16 @@ class ParkingLotProcessor:
     def set_section_boxes(self, section_boxes: list[tuple[int, int, int, int]] | tuple[tuple[int, int, int, int], ...]) -> None:
         with self._section_lock:
             self._custom_section_boxes = tuple(section_boxes)
+            self._custom_section_names = tuple(section_name_from_index(index) for index in range(len(self._custom_section_boxes)))
+            self.section_count = len(self._custom_section_boxes)
+            self.layout = "custom"
+            self._section_cache.clear()
+
+    def set_scan_areas(self, scan_areas: list[ScanArea] | tuple[ScanArea, ...]) -> None:
+        with self._section_lock:
+            normalized = tuple(scan_areas)
+            self._custom_section_boxes = tuple(area.box for area in normalized)
+            self._custom_section_names = tuple(area.name for area in normalized)
             self.section_count = len(self._custom_section_boxes)
             self.layout = "custom"
             self._section_cache.clear()
@@ -68,12 +97,19 @@ class ParkingLotProcessor:
                     f"Section box #{index + 1} is out of frame bounds "
                     f"{(width, height)}: {(x1, y1, x2, y2)}"
                 )
-            specs.append(SectionSpec(f"section-{index + 1}", index, box))
+            custom_section_names = getattr(self, "_custom_section_names", None)
+            section_name = (
+                custom_section_names[index]
+                if custom_section_names is not None and index < len(custom_section_names)
+                else section_name_from_index(index)
+            )
+            specs.append(SectionSpec(f"section-{index + 1}", index, box, section_name))
         return specs
 
     def get_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
         with self._section_lock:
-            cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes)
+            custom_section_names = getattr(self, "_custom_section_names", None)
+            cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes, custom_section_names)
             if cache_key not in self._section_cache:
                 if self._custom_section_boxes is not None:
                     self._section_cache[cache_key] = self._build_custom_section_specs(image_shape)
@@ -111,6 +147,7 @@ class ParkingLotProcessor:
                 plate_box=None,
                 detector=self.detector_name,
                 detection_score=0.0,
+                section_name=spec.display_name,
             ),
             rectified_plate=None,
         )
@@ -143,6 +180,7 @@ class ParkingLotProcessor:
                 plate_box=plate_box,
                 detector=candidate.detector,
                 detection_score=candidate.detection_score,
+                section_name=spec.display_name,
             ),
             rectified_plate=candidate.image,
         )

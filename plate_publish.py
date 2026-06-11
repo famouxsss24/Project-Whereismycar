@@ -16,7 +16,7 @@ from urllib.parse import quote
 import cv2
 import numpy as np
 
-from parking_types import ProcessedFrameAnalysis, ProcessedSectionResult
+from parking_types import ProcessedFrameAnalysis, ProcessedSectionResult, SECTION_NAME_PATTERN, section_name_from_index
 from transport import post_json
 
 try:
@@ -47,6 +47,7 @@ PLATE_IMAGE_SIZE = (120, 30)  # width, height
 class PlateUpdate:
     plate: str
     zone: str
+    section_name: str
     last4: str
     image: np.ndarray | None
 
@@ -205,6 +206,7 @@ class FirebasePlatePublisher:
     def publish(self, update: PlateUpdate, image_url: str) -> None:
         payload = {
             "zone": update.zone,
+            "section_name": update.section_name,
             "last4": update.last4,
             "image_url": image_url,
         }
@@ -262,9 +264,11 @@ class PlateUpdateDispatcher:
             if plate in updates:
                 continue
 
+            section_name = self._section_name_from_result(result)
             updates[plate] = PlateUpdate(
                 plate=plate,
-                zone=self._zone_from_index(result.section_index),
+                zone=section_name,
+                section_name=section_name,
                 last4=self._last_four_digits(plate),
                 image=section.rectified_plate,
             )
@@ -285,6 +289,7 @@ class PlateUpdateDispatcher:
             "parking_lot": {
                 update.plate: {
                     "zone": update.zone,
+                    "section_name": update.section_name,
                     "last4": update.last4,
                     "image_url": image_url,
                 }
@@ -310,9 +315,15 @@ class PlateUpdateDispatcher:
 
     @staticmethod
     def _zone_from_index(section_index: int) -> str:
-        if 0 <= section_index < 26:
-            return chr(ord("A") + section_index)
-        return f"S{section_index + 1}"
+        return section_name_from_index(section_index)
+
+    @staticmethod
+    def _section_name_from_result(result: object) -> str:
+        section_name = str(getattr(result, "section_name", "") or "").strip().lower()
+        if SECTION_NAME_PATTERN.fullmatch(section_name):
+            return section_name
+        section_index = int(getattr(result, "section_index", 0))
+        return section_name_from_index(section_index)
 
     @staticmethod
     def _last_four_digits(plate: str) -> str:

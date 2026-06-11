@@ -21,7 +21,7 @@ from plate_publish import (
     normalize_firebase_database_url,
     resolve_project_id_from_service_account,
 )
-from parking_types import Box, ProcessedFrameAnalysis
+from parking_types import Box, ProcessedFrameAnalysis, ScanArea, normalize_section_name, section_name_from_index
 from plate_detection import divide_into_sections, resolve_default_yolo_model
 from plate_ocr import load_image
 from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, ScanAreaSelector, draw_crop_debug_window, draw_preview_frame
@@ -31,7 +31,7 @@ DEFAULT_SETTINGS_PATH = Path("settings.json")
 
 
 def open_camera(camera_index: int) -> cv2.VideoCapture:
-    backend = cv2.CAP_DSHOW if os.name == "nt" and hasattr(cv2, "CAP_DSHOW") else cv2.CAP_ANY
+    backend = cv2.CAP_MSMF if os.name == "nt" and hasattr(cv2, "CAP_MSMF") else cv2.CAP_ANY
     capture = cv2.VideoCapture(camera_index, backend)
     if not capture.isOpened():
         capture.release()
@@ -82,6 +82,10 @@ def parse_section_boxes(raw_boxes: list[str] | None) -> list[tuple[int, int, int
     if not raw_boxes:
         return []
     return [parse_section_box_argument(raw_value) for raw_value in raw_boxes]
+
+
+def scan_areas_from_boxes(boxes: list[Box]) -> list[ScanArea]:
+    return [ScanArea(section_name_from_index(index), box) for index, box in enumerate(boxes)]
 
 
 def parse_camera_list_argument(value: str) -> list[int]:
@@ -161,21 +165,24 @@ def _as_optional_str(value: object, key: str) -> str | None:
     raise ValueError(f"Setting `{key}` must be a string or null.")
 
 
-def _normalize_section_box_settings(value: object, key: str = "section_boxes") -> list[str]:
+def _normalize_scan_area_settings(value: object, key: str = "section_boxes") -> list[ScanArea]:
     if value is None:
         return []
     if not isinstance(value, list):
         raise ValueError(f"Setting `{key}` must be a list.")
 
-    normalized: list[str] = []
+    normalized: list[ScanArea] = []
     for index, item in enumerate(value):
+        name = section_name_from_index(index)
         if isinstance(item, str):
-            normalized.append(item)
+            normalized.append(ScanArea(name, parse_section_box_argument(item)))
             continue
         if isinstance(item, dict):
             missing = [key for key in ("x", "y", "width", "height") if key not in item]
             if missing:
                 raise ValueError(f"{key}[{index}] is missing keys: {', '.join(missing)}")
+            if "name" in item:
+                name = normalize_section_name(str(item["name"]), f"{key}[{index}].name")
             try:
                 x = int(item["x"])
                 y = int(item["y"])
@@ -183,7 +190,7 @@ def _normalize_section_box_settings(value: object, key: str = "section_boxes") -
                 height = int(item["height"])
             except Exception as exc:
                 raise ValueError(f"{key}[{index}] contains non-integer values.") from exc
-            normalized.append(f"{x},{y},{width},{height}")
+            normalized.append(ScanArea(name, parse_section_box_argument(f"{x},{y},{width},{height}")))
             continue
         if isinstance(item, (list, tuple)) and len(item) == 4:
             try:
@@ -193,21 +200,24 @@ def _normalize_section_box_settings(value: object, key: str = "section_boxes") -
                 height = int(item[3])
             except Exception as exc:
                 raise ValueError(f"{key}[{index}] contains non-integer values.") from exc
-            normalized.append(f"{x},{y},{width},{height}")
+            normalized.append(ScanArea(name, parse_section_box_argument(f"{x},{y},{width},{height}")))
             continue
         raise ValueError(
             f"{key}[{index}] must be string, object(x,y,width,height), or [x,y,width,height]."
         )
+    names = [area.name for area in normalized]
+    if len(names) != len(set(names)):
+        raise ValueError(f"Setting `{key}` contains duplicate scan area names.")
     return normalized
 
 
-def _normalize_camera_section_box_settings(value: object) -> dict[int, list[str]]:
+def _normalize_camera_scan_area_settings(value: object) -> dict[int, list[ScanArea]]:
     if value is None:
         return {}
     if not isinstance(value, dict):
         raise ValueError("Setting `camera_section_boxes` must be an object keyed by camera index.")
 
-    normalized: dict[int, list[str]] = {}
+    normalized: dict[int, list[ScanArea]] = {}
     for raw_camera_index, raw_boxes in value.items():
         try:
             camera_index = int(raw_camera_index)
@@ -215,7 +225,7 @@ def _normalize_camera_section_box_settings(value: object) -> dict[int, list[str]
             raise ValueError(f"camera_section_boxes key must be a camera index: {raw_camera_index!r}") from exc
         if camera_index < 0:
             raise ValueError("camera_section_boxes keys must be >= 0.")
-        normalized[camera_index] = _normalize_section_box_settings(
+        normalized[camera_index] = _normalize_scan_area_settings(
             raw_boxes,
             f"camera_section_boxes[{camera_index}]",
         )
@@ -230,6 +240,11 @@ def box_to_settings_entry(box: Box) -> dict[str, int]:
         "width": int(x2 - x1),
         "height": int(y2 - y1),
     }
+
+
+def scan_area_to_settings_entry(area: ScanArea) -> dict[str, int | str]:
+    entry = box_to_settings_entry(area.box)
+    return {"name": area.name, **entry}
 
 
 def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str, object]:
@@ -262,9 +277,9 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
         defaults["sections"] = _as_int(raw_settings["sections"], "sections")
     if "--section-box" not in cli_argv:
         if "section_boxes" in raw_settings:
-            defaults["section_box"] = _normalize_section_box_settings(raw_settings["section_boxes"])
+            defaults["scan_area"] = _normalize_scan_area_settings(raw_settings["section_boxes"])
         if "camera_section_boxes" in raw_settings:
-            defaults["camera_section_boxes"] = _normalize_camera_section_box_settings(
+            defaults["camera_scan_areas"] = _normalize_camera_scan_area_settings(
                 raw_settings["camera_section_boxes"]
             )
     if "detector" in raw_settings:
@@ -577,29 +592,32 @@ def resolve_camera_indexes(args: argparse.Namespace) -> list[int]:
 
 def build_processor(
     args: argparse.Namespace,
-    section_boxes: list[Box] | None,
+    scan_areas: list[ScanArea] | None,
     resolved_yolo_model: str | None,
 ) -> ParkingLotProcessor:
-    return ParkingLotProcessor(
+    processor = ParkingLotProcessor(
         section_count=args.sections,
         layout=args.layout,
-        section_boxes=section_boxes,
+        section_boxes=None if scan_areas is None else [area.box for area in scan_areas],
         detector_name=args.detector,
         yolo_model_path=resolved_yolo_model,
         yolo_confidence=args.yolo_conf,
         yolo_image_size=args.yolo_imgsz,
         allow_yolo_fallback=not args.yolo_only,
     )
+    if scan_areas is not None:
+        processor.set_scan_areas(scan_areas)
+    return processor
 
 
 def build_processors(
     args: argparse.Namespace,
-    section_boxes_by_camera: dict[int, list[Box] | None],
+    scan_areas_by_camera: dict[int, list[ScanArea] | None],
     resolved_yolo_model: str | None,
     camera_indexes: list[int],
 ) -> dict[int, ParkingLotProcessor]:
     return {
-        camera_index: build_processor(args, section_boxes_by_camera.get(camera_index), resolved_yolo_model)
+        camera_index: build_processor(args, scan_areas_by_camera.get(camera_index), resolved_yolo_model)
         for camera_index in camera_indexes
     }
 
@@ -616,33 +634,28 @@ def open_cameras(camera_indexes: list[int]) -> dict[int, cv2.VideoCapture]:
         raise
 
 
-def parse_camera_section_boxes(raw_boxes: dict[int, list[str]] | None) -> dict[int, list[Box]]:
-    if not raw_boxes:
-        return {}
-    return {
-        camera_index: parse_section_boxes(camera_boxes)
-        for camera_index, camera_boxes in raw_boxes.items()
-    }
-
-
-def resolve_configured_section_boxes(
+def resolve_configured_scan_areas(
     args: argparse.Namespace,
     camera_indexes: list[int],
     cli_section_box_override: bool,
-) -> dict[int, list[Box] | None]:
-    global_section_boxes = parse_section_boxes(args.section_box)
-    camera_section_boxes = parse_camera_section_boxes(getattr(args, "camera_section_boxes", None))
+) -> dict[int, list[ScanArea] | None]:
+    cli_scan_areas = scan_areas_from_boxes(parse_section_boxes(args.section_box))
+    raw_settings_scan_areas = getattr(args, "scan_area", None)
+    settings_scan_areas = raw_settings_scan_areas if isinstance(raw_settings_scan_areas, list) else None
+    global_scan_areas = cli_scan_areas if cli_section_box_override else settings_scan_areas or cli_scan_areas
+    raw_camera_scan_areas = getattr(args, "camera_scan_areas", None)
+    camera_scan_areas = raw_camera_scan_areas if isinstance(raw_camera_scan_areas, dict) else {}
 
-    configured: dict[int, list[Box] | None] = {}
+    configured: dict[int, list[ScanArea] | None] = {}
     for camera_index in camera_indexes:
-        if args.webcam and not cli_section_box_override and camera_index in camera_section_boxes:
-            configured[camera_index] = camera_section_boxes[camera_index]
+        if args.webcam and not cli_section_box_override and camera_index in camera_scan_areas:
+            configured[camera_index] = camera_scan_areas[camera_index]
             continue
-        configured[camera_index] = global_section_boxes if global_section_boxes else None
+        configured[camera_index] = global_scan_areas if global_scan_areas else None
     return configured
 
 
-def save_camera_section_boxes(settings_path: Path, camera_index: int, boxes: list[Box]) -> None:
+def save_camera_scan_areas(settings_path: Path, camera_index: int, scan_areas: list[ScanArea]) -> None:
     settings: dict[str, object] = {}
     if settings_path.exists():
         with settings_path.open("r", encoding="utf-8") as settings_file:
@@ -652,7 +665,7 @@ def save_camera_section_boxes(settings_path: Path, camera_index: int, boxes: lis
 
     raw_camera_boxes = settings.get("camera_section_boxes")
     camera_boxes = raw_camera_boxes if isinstance(raw_camera_boxes, dict) else {}
-    camera_boxes[str(camera_index)] = [box_to_settings_entry(box) for box in boxes]
+    camera_boxes[str(camera_index)] = [scan_area_to_settings_entry(area) for area in scan_areas]
     settings["camera_section_boxes"] = camera_boxes
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -724,14 +737,17 @@ def preview_window_name(base_name: str, camera_index: int, multi_camera: bool) -
     return f"{base_name} - Camera {camera_index}" if multi_camera else base_name
 
 
-def initial_scan_boxes(
+def initial_scan_areas(
     args: argparse.Namespace,
-    configured_section_boxes: list[Box] | None,
+    configured_scan_areas: list[ScanArea] | None,
     frame_shape: tuple[int, ...],
-) -> list[Box]:
-    if configured_section_boxes is not None:
-        return list(configured_section_boxes)
-    return [spec.box for spec in divide_into_sections(frame_shape, args.sections, args.layout)]
+) -> list[ScanArea]:
+    if configured_scan_areas is not None:
+        return list(configured_scan_areas)
+    return [
+        ScanArea(spec.display_name, spec.box)
+        for spec in divide_into_sections(frame_shape, args.sections, args.layout)
+    ]
 
 
 def run_preview_loop(
@@ -739,7 +755,7 @@ def run_preview_loop(
     processors: dict[int, ParkingLotProcessor],
     dispatcher: PlateUpdateDispatcher,
     camera_indexes: list[int],
-    configured_section_boxes_by_camera: dict[int, list[Box] | None],
+    configured_scan_areas_by_camera: dict[int, list[ScanArea] | None],
     settings_path: Path,
 ) -> int:
     captures = open_cameras(camera_indexes)
@@ -771,18 +787,18 @@ def run_preview_loop(
 
                     state.selector.set_frame_shape(frame.shape)
                     if not state.selector_initialized:
-                        state.selector.set_initial_boxes(
-                            initial_scan_boxes(
+                        state.selector.set_initial_scan_areas(
+                            initial_scan_areas(
                                 args,
-                                configured_section_boxes_by_camera.get(camera_index),
+                                configured_scan_areas_by_camera.get(camera_index),
                                 frame.shape,
                             )
                         )
                         state.selector_initialized = True
 
                     if state.selector.consume_changed():
-                        state.processor.set_section_boxes(state.selector.boxes)
-                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
+                        state.processor.set_scan_areas(state.selector.scan_areas)
+                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
 
                     if state.pending is not None and state.pending.done():
                         try:
@@ -815,6 +831,7 @@ def run_preview_loop(
                         last_completed_at=None if state.last_completed_at is None else now - state.last_completed_at,
                         latest_error=state.latest_error,
                         draft_box=state.selector.draft_box,
+                        selected_section_name=state.selector.selected_name,
                     )
                     crop_debug_display = draw_crop_debug_window(
                         processed_sections=latest_analysis.sections if latest_analysis is not None else [],
@@ -826,16 +843,25 @@ def run_preview_loop(
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     return 0
-                if key == ord("c"):
+                elif key == ord("c"):
                     for camera_index, state in states.items():
                         state.selector.clear()
-                        state.processor.set_section_boxes(state.selector.boxes)
-                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
-                if key == ord("r"):
+                        state.processor.set_scan_areas(state.selector.scan_areas)
+                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                elif key == ord("r"):
                     for camera_index, state in states.items():
                         state.selector.reset()
-                        state.processor.set_section_boxes(state.selector.boxes)
-                        save_camera_section_boxes(settings_path, camera_index, state.selector.boxes)
+                        state.processor.set_scan_areas(state.selector.scan_areas)
+                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                elif key == 9:
+                    for state in states.values():
+                        state.selector.select_next()
+                elif ord("a") <= key <= ord("z"):
+                    name = chr(key)
+                    for camera_index, state in states.items():
+                        if state.selector.rename_selected(name):
+                            state.processor.set_scan_areas(state.selector.scan_areas)
+                            save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
         finally:
             for capture in captures.values():
                 capture.release()
@@ -913,7 +939,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
-        configured_section_boxes_by_camera = resolve_configured_section_boxes(
+        configured_scan_areas_by_camera = resolve_configured_scan_areas(
             args,
             camera_indexes,
             cli_has_option(argv_list, "--section-box"),
@@ -927,20 +953,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         dispatcher = build_dispatcher(args)
         if args.preview:
-            processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, camera_indexes)
+            processors = build_processors(args, configured_scan_areas_by_camera, resolved_yolo_model, camera_indexes)
             return run_preview_loop(
                 args,
                 processors,
                 dispatcher,
                 camera_indexes,
-                configured_section_boxes_by_camera,
+                configured_scan_areas_by_camera,
                 settings_path,
             )
         if args.loop:
-            processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, camera_indexes)
+            processors = build_processors(args, configured_scan_areas_by_camera, resolved_yolo_model, camera_indexes)
             return run_loop(args, processors, dispatcher, camera_indexes)
         run_once_camera_indexes = camera_indexes if args.webcam else [camera_indexes[0]]
-        processors = build_processors(args, configured_section_boxes_by_camera, resolved_yolo_model, run_once_camera_indexes)
+        processors = build_processors(args, configured_scan_areas_by_camera, resolved_yolo_model, run_once_camera_indexes)
         return run_once(args, processors, dispatcher, run_once_camera_indexes)
     except KeyboardInterrupt:
         return 0

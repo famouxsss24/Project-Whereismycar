@@ -115,6 +115,8 @@ In preview mode, OCR runs only inside the active scan rectangles shown on the ca
 - Drag with the mouse in a preview window to select a scan area.
 - The first drag replaces the configured/default areas for that camera.
 - Additional drags add more scan areas for that camera.
+- Press `Tab` to select the next scan area.
+- Press a lowercase letter (`a`-`z`) to name the selected scan area.
 - Scan areas are saved automatically to `camera_section_boxes` in `settings.json`.
 - Press `c` to clear scan areas.
 - Press `r` to restore the configured/default areas.
@@ -125,11 +127,13 @@ Saved multi-camera scan areas look like this:
 ```json
 {
   "camera_section_boxes": {
-    "0": [{"x": 20, "y": 120, "width": 180, "height": 180}],
-    "1": [{"x": 30, "y": 100, "width": 220, "height": 160}]
+    "0": [{"name": "a", "x": 20, "y": 120, "width": 180, "height": 180}],
+    "1": [{"name": "b", "x": 30, "y": 100, "width": 220, "height": 160}]
   }
 }
 ```
+
+Detected plate records publish lowercase scan names as both `zone` and `section_name`.
 
 ## Optional HTTP Output
 

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from parking_types import Box, ProcessedSectionResult, SectionSpec
+from parking_types import Box, ProcessedSectionResult, ScanArea, SectionSpec, normalize_section_name, section_name_from_index
 
 
 WINDOW_NAME = "Parking OCR Preview"
@@ -18,25 +18,44 @@ MIN_SCAN_BOX_SIZE = 12
 
 class ScanAreaSelector:
     def __init__(self) -> None:
-        self._boxes: list[Box] = []
-        self._initial_boxes: list[Box] = []
+        self._areas: list[ScanArea] = []
+        self._initial_areas: list[ScanArea] = []
         self._frame_shape: tuple[int, ...] | None = None
         self._drag_start: tuple[int, int] | None = None
         self._drag_end: tuple[int, int] | None = None
         self._changed = False
         self._has_user_selection = False
+        self._selected_index: int | None = None
 
     def set_frame_shape(self, frame_shape: tuple[int, ...]) -> None:
         self._frame_shape = frame_shape
 
     def set_initial_boxes(self, boxes: list[Box]) -> None:
-        self._initial_boxes = list(boxes)
+        self.set_initial_scan_areas(
+            [ScanArea(section_name_from_index(index), box) for index, box in enumerate(boxes)]
+        )
+
+    def set_initial_scan_areas(self, areas: list[ScanArea]) -> None:
+        self._initial_areas = list(areas)
         if not self._has_user_selection:
-            self._boxes = list(boxes)
+            self._areas = list(areas)
+            self._selected_index = 0 if self._areas else None
 
     @property
     def boxes(self) -> list[Box]:
-        return list(self._boxes)
+        return [area.box for area in self._areas]
+
+    @property
+    def scan_areas(self) -> list[ScanArea]:
+        return list(self._areas)
+
+    @property
+    def selected_name(self) -> str | None:
+        if self._selected_index is None:
+            return None
+        if self._selected_index < 0 or self._selected_index >= len(self._areas):
+            return None
+        return self._areas[self._selected_index].name
 
     @property
     def draft_box(self) -> Box | None:
@@ -50,18 +69,40 @@ class ScanAreaSelector:
         return changed
 
     def clear(self) -> None:
-        self._boxes = []
+        self._areas = []
         self._drag_start = None
         self._drag_end = None
+        self._selected_index = None
         self._has_user_selection = True
         self._changed = True
 
     def reset(self) -> None:
-        self._boxes = list(self._initial_boxes)
+        self._areas = list(self._initial_areas)
         self._drag_start = None
         self._drag_end = None
+        self._selected_index = 0 if self._areas else None
         self._has_user_selection = False
         self._changed = True
+
+    def select_next(self) -> None:
+        if not self._areas:
+            self._selected_index = None
+            return
+        if self._selected_index is None:
+            self._selected_index = 0
+            return
+        self._selected_index = (self._selected_index + 1) % len(self._areas)
+
+    def rename_selected(self, name: str) -> bool:
+        if self._selected_index is None or not self._areas:
+            return False
+        normalized = normalize_section_name(name)
+        if any(index != self._selected_index and area.name == normalized for index, area in enumerate(self._areas)):
+            return False
+        selected = self._areas[self._selected_index]
+        self._areas[self._selected_index] = ScanArea(normalized, selected.box)
+        self._changed = True
+        return True
 
     def mouse_callback(self, event: int, x: int, y: int, flags: int, userdata: object | None = None) -> None:
         point = self._clamp_point((x, y))
@@ -83,9 +124,10 @@ class ScanAreaSelector:
             if x2 - x1 < MIN_SCAN_BOX_SIZE or y2 - y1 < MIN_SCAN_BOX_SIZE:
                 return
             if not self._has_user_selection:
-                self._boxes = []
+                self._areas = []
                 self._has_user_selection = True
-            self._boxes.append(box)
+            self._areas.append(ScanArea(self._next_available_name(), box))
+            self._selected_index = len(self._areas) - 1
             self._changed = True
 
     def _normalize_box(self, start: tuple[int, int], end: tuple[int, int]) -> Box | None:
@@ -102,6 +144,15 @@ class ScanAreaSelector:
         x = min(max(point[0], 0), max(width - 1, 0))
         y = min(max(point[1], 0), max(height - 1, 0))
         return (x, y)
+
+    def _next_available_name(self) -> str:
+        used = {area.name for area in self._areas}
+        index = 0
+        while True:
+            name = section_name_from_index(index)
+            if name not in used:
+                return name
+            index += 1
 
 
 @lru_cache(maxsize=8)
@@ -175,7 +226,7 @@ def preview_lines_from_payload(
         lines.append(("No OCR result yet", 24, (255, 220, 120)))
     else:
         for section in payload["sections"]:
-            section_id = section["section_id"]
+            section_id = section.get("section_name", section["section_id"])
             plate_text = section["plate_text"]
             valid_plate = bool(section["valid_plate"])
             occupied = bool(section["occupied"])
@@ -196,7 +247,7 @@ def preview_lines_from_payload(
             lines.append((text, 24, color))
 
     lines.append((f"Last OCR: {format_elapsed(last_completed_at)}", 20, (220, 220, 220)))
-    lines.append(("Drag scan areas. c clear, r reset, q quit.", 20, (220, 220, 220)))
+    lines.append(("Drag boxes. Tab select, a-z rename, c clear, r reset, q quit.", 20, (220, 220, 220)))
     if latest_error:
         lines.append((f"Error: {latest_error}", 20, (255, 140, 140)))
     return lines
@@ -210,6 +261,7 @@ def draw_preview_frame(
     last_completed_at: float | None,
     latest_error: str | None,
     draft_box: Box | None = None,
+    selected_section_name: str | None = None,
 ) -> np.ndarray:
     display = frame.copy()
     payload_sections: dict[str, dict[str, object]] = {}
@@ -223,6 +275,7 @@ def draw_preview_frame(
     for spec in section_specs:
         section_data = payload_sections.get(spec.section_id)
         x1, y1, x2, y2 = spec.box
+        section_name = spec.display_name
         if section_data is None:
             color = (180, 180, 180)
         elif section_data["valid_plate"]:
@@ -232,7 +285,18 @@ def draw_preview_frame(
         else:
             color = (180, 180, 180)
 
-        cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
+        thickness = 4 if section_name == selected_section_name else 2
+        cv2.rectangle(display, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(
+            display,
+            section_name,
+            (x1 + 6, max(y1 + 24, 24)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
         if section_data and section_data["plate_box"]:
             plate_box = section_data["plate_box"]
             cv2.rectangle(
@@ -264,7 +328,7 @@ def resize_to_fit(image: np.ndarray, max_width: int, max_height: int) -> np.ndar
 
 def make_crop_panel(
     processed_section: ProcessedSectionResult | None,
-    section_id: str,
+    section_name: str,
     panel_width: int = 360,
     panel_height: int = 260,
 ) -> np.ndarray:
@@ -275,7 +339,7 @@ def make_crop_panel(
 
     section_view = np.full((content_height, content_width, 3), 36, dtype=np.uint8)
     text_color = (220, 220, 220)
-    text_line = f"{section_id}: empty"
+    text_line = f"{section_name}: empty"
 
     if processed_section is not None:
         result = processed_section.result
@@ -284,13 +348,13 @@ def make_crop_panel(
             section_view = processed_section.rectified_plate.copy()
         if result.valid_plate and result.plate_text:
             text_color = (115, 235, 140)
-            text_line = f"{section_id}: {result.plate_text} ({result.confidence:.2f}) [{detector_name}]"
+            text_line = f"{section_name}: {result.plate_text} ({result.confidence:.2f}) [{detector_name}]"
         elif result.occupied and result.plate_text:
             text_color = (255, 220, 120)
-            text_line = f"{section_id}: OCR {result.plate_text} ({result.confidence:.2f}) [{detector_name}]"
+            text_line = f"{section_name}: OCR {result.plate_text} ({result.confidence:.2f}) [{detector_name}]"
         elif result.occupied:
             text_color = (255, 220, 120)
-            text_line = f"{section_id}: candidate found [{detector_name}]"
+            text_line = f"{section_name}: candidate found [{detector_name}]"
 
     fitted = resize_to_fit(section_view, content_width, content_height)
     fit_height, fit_width = fitted.shape[:2]
@@ -299,7 +363,7 @@ def make_crop_panel(
     panel[y_offset:y_offset + fit_height, x_offset:x_offset + fit_width] = fitted
 
     lines = [
-        (f"Crop Debug: {section_id}", 22, (255, 255, 255)),
+        (f"Crop Debug: {section_name}", 22, (255, 255, 255)),
         (text_line, 20, text_color),
     ]
     return draw_text_panel(panel, lines)
@@ -313,7 +377,7 @@ def draw_crop_debug_window(
 
     panels = []
     for spec in section_specs:
-        panels.append(make_crop_panel(section_map.get(spec.section_id), spec.section_id))
+        panels.append(make_crop_panel(section_map.get(spec.section_id), spec.display_name))
 
     if not panels:
         return np.zeros((260, 360, 3), dtype=np.uint8)

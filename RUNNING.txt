@@ -1,0 +1,55 @@
+MobileRobotTemi run instructions
+
+1. Open PowerShell in this folder:
+
+   C:\Users\Sangjee\PycharmProjects\MobileRobotTemi
+
+2. Create and activate the virtual environment if it does not exist:
+
+   python -m venv .venv
+   .\.venv\Scripts\activate
+
+3. Install dependencies:
+
+   pip install -r requirements.txt
+
+4. Confirm required files exist:
+
+   models\license-plate-finetune-v1m.pt
+   secrets\firebase-service-account.json
+   secrets\azure-blob.json
+   settings.json
+
+5. Run the webcam programme using settings.json:
+
+   .\.venv\Scripts\python.exe main.py --settings settings.json
+
+6. Run with explicit webcam options:
+
+   .\.venv\Scripts\python.exe main.py --webcam --camera 0 --detector yolo --preview --pretty
+
+7. Run an image test:
+
+   .\.venv\Scripts\python.exe main.py test1.jpg --detector yolo --yolo-model models\license-plate-finetune-v1m.pt --pretty
+
+8. Preview controls:
+
+   Drag mouse: create scan box
+   Tab: select next scan box
+   a-z: rename selected scan box
+   c: clear scan boxes
+   r: restore default scan boxes
+   q or Esc: quit
+
+9. Database output:
+
+   Valid YOLO plate detections are published under the Firebase root path in settings.json.
+   Each record includes lowercase zone, section_name, last4, and image_url.
+
+10. Check Firebase data:
+
+   .\.venv\Scripts\python.exe check_db.py --service-account secrets\firebase-service-account.json --database-url https://wimc-51ff9-default-rtdb.asia-southeast1.firebasedatabase.app --pretty
+
+11. Run tests:
+
+   .\.venv\Scripts\python.exe -m unittest discover -s tests

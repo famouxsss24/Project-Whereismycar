@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from parking_types import PlateCandidate, SectionSpec
+from parking_types import PlateCandidate, SectionSpec, section_name_from_index
 
 
 DEFAULT_YOLO_MODEL_CANDIDATES = (
@@ -29,14 +29,14 @@ def divide_into_sections(image_shape: tuple[int, int, int], count: int, layout: 
         for index in range(count):
             x1 = int(boundaries[index])
             x2 = int(boundaries[index + 1])
-            sections.append(SectionSpec(f"section-{index + 1}", index, (x1, 0, x2, height)))
+            sections.append(SectionSpec(f"section-{index + 1}", index, (x1, 0, x2, height), section_name_from_index(index)))
         return sections
 
     boundaries = np.linspace(0, height, count + 1, dtype=int)
     for index in range(count):
         y1 = int(boundaries[index])
         y2 = int(boundaries[index + 1])
-        sections.append(SectionSpec(f"section-{index + 1}", index, (0, y1, width, y2)))
+        sections.append(SectionSpec(f"section-{index + 1}", index, (0, y1, width, y2), section_name_from_index(index)))
     return sections
 
 

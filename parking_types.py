@@ -1,11 +1,34 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
 
 
 Box = tuple[int, int, int, int]
+SECTION_NAME_PATTERN = re.compile(r"^[a-z]+$")
+
+
+def section_name_from_index(index: int) -> str:
+    if index < 0:
+        raise ValueError("Section index must be >= 0.")
+
+    name = ""
+    current = index
+    while True:
+        current, remainder = divmod(current, 26)
+        name = chr(ord("a") + remainder) + name
+        if current == 0:
+            return name
+        current -= 1
+
+
+def normalize_section_name(value: str, key: str = "section name") -> str:
+    normalized = value.strip().lower()
+    if not SECTION_NAME_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{key} must contain only lowercase letters a-z.")
+    return normalized
 
 
 def box_to_dict(box: Box) -> dict[str, int]:
@@ -14,10 +37,21 @@ def box_to_dict(box: Box) -> dict[str, int]:
 
 
 @dataclass(frozen=True)
+class ScanArea:
+    name: str
+    box: Box
+
+
+@dataclass(frozen=True)
 class SectionSpec:
     section_id: str
     index: int
     box: Box
+    section_name: str | None = None
+
+    @property
+    def display_name(self) -> str:
+        return self.section_name or self.section_id
 
 
 @dataclass
@@ -42,10 +76,13 @@ class SectionResult:
     plate_box: Box | None
     detector: str
     detection_score: float
+    section_name: str | None = None
 
     def to_dict(self) -> dict[str, object]:
+        section_name = self.section_name or self.section_id
         return {
             "section_id": self.section_id,
+            "section_name": section_name,
             "section_index": self.section_index,
             "occupied": self.occupied,
             "plate_found": self.plate_found,
