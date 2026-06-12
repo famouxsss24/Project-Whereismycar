@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover - optional dependency
 DIGITS_PATTERN = re.compile(r"\d")
 INVALID_FILE_CHARS_PATTERN = re.compile(r'[\\/:*?"<>|]+')
 PLATE_IMAGE_SIZE = (120, 30)  # width, height
+KST = timezone(timedelta(hours=9))
 
 
 @dataclass(frozen=True)
@@ -206,11 +207,14 @@ class FirebasePlatePublisher:
     def publish(self, update: PlateUpdate, image_url: str) -> None:
         payload = {
             "zone": update.zone,
-            "section_name": update.section_name,
             "last4": update.last4,
             "image_url": image_url,
         }
-        db.reference(f"{self._root_path}/{update.plate}", app=self._app).set(payload)
+        reference = db.reference(f"{self._root_path}/{update.plate}", app=self._app)
+        existing = reference.get()
+        if not isinstance(existing, dict) or "entry_time" not in existing:
+            payload["entry_time"] = format_kst_entry_time()
+        reference.update(payload)
 
 
 class PlateUpdateDispatcher:
@@ -366,3 +370,7 @@ def _connection_string_value(connection_string: str, key: str) -> str:
 def _encode_plate_jpg(image: np.ndarray) -> tuple[bool, np.ndarray]:
     resized = cv2.resize(image, PLATE_IMAGE_SIZE, interpolation=cv2.INTER_AREA)
     return cv2.imencode(".jpg", resized)
+
+
+def format_kst_entry_time() -> str:
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")

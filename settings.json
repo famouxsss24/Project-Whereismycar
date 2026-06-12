@@ -1,7 +1,20 @@
 {
   "image_path": null,
   "webcam": true,
-  "camera": 0,
+  "cameras": [
+    1,
+    2
+  ],
+  "camera_resolutions": {
+    "1": {
+      "width": 3840,
+      "height": 2160
+    },
+    "2": {
+      "width": 3840,
+      "height": 2160
+    }
+  },
   "sections": 3,
   "section_boxes": [
     {
@@ -51,5 +64,26 @@
   "plate_cooldown": 30.0,
   "loop": false,
   "preview": true,
-  "pretty": true
+  "pretty": true,
+  "camera_section_boxes": {
+    "0": [
+      {
+        "name": "a",
+        "x": 206,
+        "y": 252,
+        "width": 267,
+        "height": 203
+      }
+    ],
+    "1": [],
+    "2": [
+      {
+        "name": "d",
+        "x": 653,
+        "y": 805,
+        "width": 600,
+        "height": 275
+      }
+    ]
+  }
 }

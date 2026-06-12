@@ -28,23 +28,84 @@ from preview_windows import CROP_WINDOW_NAME, WINDOW_NAME, ScanAreaSelector, dra
 
 
 DEFAULT_SETTINGS_PATH = Path("settings.json")
+PREVIEW_WINDOW_INITIAL_SIZE = (1280, 720)
+CROP_WINDOW_INITIAL_SIZE = (1280, 480)
+PREFERRED_CAMERA_RESOLUTIONS = (
+    (4000, 3000),
+    (3840, 2160),
+    (2560, 1440),
+    (1920, 1080),
+    (1600, 900),
+    (1280, 720),
+    (1024, 768),
+    (800, 600),
+    (640, 480),
+)
 
 
-def open_camera(camera_index: int) -> cv2.VideoCapture:
-    backend = cv2.CAP_MSMF if os.name == "nt" and hasattr(cv2, "CAP_MSMF") else cv2.CAP_ANY
-    capture = cv2.VideoCapture(camera_index, backend)
-    if not capture.isOpened():
+def create_resizable_window(window_name: str, initial_size: tuple[int, int]) -> None:
+    width, height = initial_size
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, width, height)
+
+
+def request_camera_resolution(capture: cv2.VideoCapture, resolution: tuple[int, int]) -> None:
+    if hasattr(cv2, "VideoWriter_fourcc") and hasattr(cv2, "CAP_PROP_FOURCC"):
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    width, height = resolution
+    capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+
+def request_highest_camera_resolution(capture: cv2.VideoCapture) -> None:
+    if hasattr(cv2, "VideoWriter_fourcc") and hasattr(cv2, "CAP_PROP_FOURCC"):
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+    best_resolution: tuple[int, int] | None = None
+    best_area = 0
+    for width, height in PREFERRED_CAMERA_RESOLUTIONS:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if actual_width <= 0 or actual_height <= 0:
+            continue
+        area = actual_width * actual_height
+        if area > best_area:
+            best_area = area
+            best_resolution = (actual_width, actual_height)
+
+    if best_resolution is not None:
+        width, height = best_resolution
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+
+def open_camera(camera_index: int, resolution: tuple[int, int] | None = None) -> cv2.VideoCapture:
+    backends = []
+    if os.name == "nt" and hasattr(cv2, "CAP_DSHOW"):
+        backends.append(cv2.CAP_DSHOW)
+    backends.append(cv2.CAP_ANY)
+
+    capture = cv2.VideoCapture()
+    for backend in backends:
+        capture = cv2.VideoCapture(camera_index, backend)
+        if capture.isOpened():
+            break
         capture.release()
-        capture = cv2.VideoCapture(camera_index)
     if not capture.isOpened():
         raise RuntimeError(f"Unable to open webcam index {camera_index}.")
+    if resolution is None:
+        request_highest_camera_resolution(capture)
+    else:
+        request_camera_resolution(capture, resolution)
     if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
         capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return capture
 
 
-def capture_webcam_frame(camera_index: int) -> np.ndarray:
-    capture = open_camera(camera_index)
+def capture_webcam_frame(camera_index: int, resolution: tuple[int, int] | None = None) -> np.ndarray:
+    capture = open_camera(camera_index, resolution)
     try:
         ok, frame = capture.read()
         if not ok or frame is None:
@@ -149,6 +210,30 @@ def _as_int_list(value: object, key: str) -> list[int]:
         if index < 0:
             raise ValueError(f"Setting `{key}` camera indexes must be >= 0.")
     return dedupe_camera_indexes(indexes)
+
+
+def _as_camera_resolution_map(value: object, key: str = "camera_resolutions") -> dict[int, tuple[int, int]]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Setting `{key}` must be an object keyed by camera index.")
+
+    resolutions: dict[int, tuple[int, int]] = {}
+    for raw_camera_index, raw_resolution in value.items():
+        try:
+            camera_index = int(raw_camera_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key} key must be a camera index: {raw_camera_index!r}") from exc
+        if camera_index < 0:
+            raise ValueError(f"{key} keys must be >= 0.")
+        if not isinstance(raw_resolution, dict):
+            raise ValueError(f"{key}[{camera_index}] must be an object with width and height.")
+        width = _as_int(raw_resolution.get("width"), f"{key}[{camera_index}].width")
+        height = _as_int(raw_resolution.get("height"), f"{key}[{camera_index}].height")
+        if width <= 0 or height <= 0:
+            raise ValueError(f"{key}[{camera_index}] width and height must be > 0.")
+        resolutions[camera_index] = (width, height)
+    return resolutions
 
 
 def _as_float(value: object, key: str) -> float:
@@ -273,6 +358,8 @@ def load_settings_defaults(settings_path: Path, cli_argv: list[str]) -> dict[str
             if camera_index < 0:
                 raise ValueError("Setting `camera` must be >= 0.")
             defaults["camera"] = [camera_index]
+    if "camera_resolutions" in raw_settings:
+        defaults["camera_resolutions"] = _as_camera_resolution_map(raw_settings["camera_resolutions"])
     if "sections" in raw_settings:
         defaults["sections"] = _as_int(raw_settings["sections"], "sections")
     if "--section-box" not in cli_argv:
@@ -622,11 +709,16 @@ def build_processors(
     }
 
 
-def open_cameras(camera_indexes: list[int]) -> dict[int, cv2.VideoCapture]:
+def camera_resolution_for(args: argparse.Namespace, camera_index: int) -> tuple[int, int] | None:
+    resolutions = getattr(args, "camera_resolutions", None)
+    return resolutions.get(camera_index) if isinstance(resolutions, dict) else None
+
+
+def open_cameras(args: argparse.Namespace, camera_indexes: list[int]) -> dict[int, cv2.VideoCapture]:
     captures: dict[int, cv2.VideoCapture] = {}
     try:
         for camera_index in camera_indexes:
-            captures[camera_index] = open_camera(camera_index)
+            captures[camera_index] = open_camera(camera_index, camera_resolution_for(args, camera_index))
         return captures
     except Exception:
         for capture in captures.values():
@@ -682,7 +774,7 @@ def run_once(
 ) -> int:
     if args.webcam:
         for camera_index in camera_indexes:
-            frame = capture_webcam_frame(camera_index)
+            frame = capture_webcam_frame(camera_index, camera_resolution_for(args, camera_index))
             analysis = processors[camera_index].process_frame(frame, "webcam", str(camera_index))
             dispatcher.emit(analysis, args.pretty)
         return 0
@@ -704,7 +796,7 @@ def run_loop(
     dispatcher: PlateUpdateDispatcher,
     camera_indexes: list[int],
 ) -> int:
-    captures = open_cameras(camera_indexes)
+    captures = open_cameras(args, camera_indexes)
     try:
         while True:
             for camera_index, capture in captures.items():
@@ -758,7 +850,7 @@ def run_preview_loop(
     configured_scan_areas_by_camera: dict[int, list[ScanArea] | None],
     settings_path: Path,
 ) -> int:
-    captures = open_cameras(camera_indexes)
+    captures = open_cameras(args, camera_indexes)
     multi_camera = len(camera_indexes) > 1
     states: dict[int, PreviewCameraState] = {}
 
@@ -766,7 +858,8 @@ def run_preview_loop(
         selector = ScanAreaSelector()
         window_name = preview_window_name(WINDOW_NAME, camera_index, multi_camera)
         crop_window_name = preview_window_name(CROP_WINDOW_NAME, camera_index, multi_camera)
-        cv2.namedWindow(window_name)
+        create_resizable_window(window_name, PREVIEW_WINDOW_INITIAL_SIZE)
+        create_resizable_window(crop_window_name, CROP_WINDOW_INITIAL_SIZE)
         cv2.setMouseCallback(window_name, selector.mouse_callback)
         states[camera_index] = PreviewCameraState(
             processor=processors[camera_index],

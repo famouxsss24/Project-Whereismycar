@@ -326,26 +326,61 @@ def resize_to_fit(image: np.ndarray, max_width: int, max_height: int) -> np.ndar
     return cv2.resize(image, (new_width, new_height), interpolation=interpolation)
 
 
+def draw_relative_plate_box(section_image: np.ndarray, result_box: dict[str, int] | None, section_box: dict[str, int]) -> np.ndarray:
+    display = section_image.copy()
+    if result_box is None:
+        return display
+
+    x_offset = int(section_box["x1"])
+    y_offset = int(section_box["y1"])
+    x1 = max(0, int(result_box["x1"]) - x_offset)
+    y1 = max(0, int(result_box["y1"]) - y_offset)
+    x2 = min(display.shape[1], int(result_box["x2"]) - x_offset)
+    y2 = min(display.shape[0], int(result_box["y2"]) - y_offset)
+    if x2 > x1 and y2 > y1:
+        cv2.rectangle(display, (x1, y1), (x2, y2), (70, 220, 255), 2)
+    return display
+
+
 def make_crop_panel(
     processed_section: ProcessedSectionResult | None,
     section_name: str,
-    panel_width: int = 360,
-    panel_height: int = 260,
+    panel_width: int = 420,
+    panel_height: int = 420,
 ) -> np.ndarray:
     panel = np.full((panel_height, panel_width, 3), 24, dtype=np.uint8)
-    content_top = 70
-    content_height = panel_height - content_top - 16
+    header_height = 72
+    gap = 12
+    raw_height = 220
+    plate_height = panel_height - header_height - raw_height - gap - 18
     content_width = panel_width - 24
 
-    section_view = np.full((content_height, content_width, 3), 36, dtype=np.uint8)
+    raw_view = np.full((raw_height, content_width, 3), 36, dtype=np.uint8)
+    plate_view = np.full((plate_height, content_width, 3), 32, dtype=np.uint8)
     text_color = (220, 220, 220)
     text_line = f"{section_name}: empty"
 
     if processed_section is not None:
         result = processed_section.result
         detector_name = result.detector
+        if processed_section.section_image is not None:
+            raw_view = draw_relative_plate_box(
+                processed_section.section_image,
+                None if result.plate_box is None else {
+                    "x1": result.plate_box[0],
+                    "y1": result.plate_box[1],
+                    "x2": result.plate_box[2],
+                    "y2": result.plate_box[3],
+                },
+                {
+                    "x1": result.section_box[0],
+                    "y1": result.section_box[1],
+                    "x2": result.section_box[2],
+                    "y2": result.section_box[3],
+                },
+            )
         if processed_section.rectified_plate is not None:
-            section_view = processed_section.rectified_plate.copy()
+            plate_view = processed_section.rectified_plate.copy()
         if result.valid_plate and result.plate_text:
             text_color = (115, 235, 140)
             text_line = f"{section_name}: {result.plate_text} ({result.confidence:.2f}) [{detector_name}]"
@@ -356,14 +391,20 @@ def make_crop_panel(
             text_color = (255, 220, 120)
             text_line = f"{section_name}: candidate found [{detector_name}]"
 
-    fitted = resize_to_fit(section_view, content_width, content_height)
-    fit_height, fit_width = fitted.shape[:2]
-    x_offset = (panel_width - fit_width) // 2
-    y_offset = content_top + (content_height - fit_height) // 2
-    panel[y_offset:y_offset + fit_height, x_offset:x_offset + fit_width] = fitted
+    raw_fitted = resize_to_fit(raw_view, content_width, raw_height)
+    raw_fit_height, raw_fit_width = raw_fitted.shape[:2]
+    raw_x = (panel_width - raw_fit_width) // 2
+    raw_y = header_height + (raw_height - raw_fit_height) // 2
+    panel[raw_y:raw_y + raw_fit_height, raw_x:raw_x + raw_fit_width] = raw_fitted
+
+    plate_fitted = resize_to_fit(plate_view, content_width, plate_height)
+    plate_fit_height, plate_fit_width = plate_fitted.shape[:2]
+    plate_x = (panel_width - plate_fit_width) // 2
+    plate_y = header_height + raw_height + gap + (plate_height - plate_fit_height) // 2
+    panel[plate_y:plate_y + plate_fit_height, plate_x:plate_x + plate_fit_width] = plate_fitted
 
     lines = [
-        (f"Crop Debug: {section_name}", 22, (255, 255, 255)),
+        (f"Scan Debug: {section_name}", 22, (255, 255, 255)),
         (text_line, 20, text_color),
     ]
     return draw_text_panel(panel, lines)
@@ -380,5 +421,5 @@ def draw_crop_debug_window(
         panels.append(make_crop_panel(section_map.get(spec.section_id), spec.display_name))
 
     if not panels:
-        return np.zeros((260, 360, 3), dtype=np.uint8)
+        return np.zeros((420, 420, 3), dtype=np.uint8)
     return np.hstack(panels)

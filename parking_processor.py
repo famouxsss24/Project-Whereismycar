@@ -132,7 +132,7 @@ class ParkingLotProcessor:
             return enhanced
         return primary if primary.confidence >= enhanced.confidence else enhanced
 
-    def _empty_section(self, spec: SectionSpec) -> ProcessedSectionResult:
+    def _empty_section(self, spec: SectionSpec, section_image: np.ndarray | None = None) -> ProcessedSectionResult:
         return ProcessedSectionResult(
             result=SectionResult(
                 section_id=spec.section_id,
@@ -149,12 +149,18 @@ class ParkingLotProcessor:
                 detection_score=0.0,
                 section_name=spec.display_name,
             ),
+            section_image=None if section_image is None else section_image.copy(),
             rectified_plate=None,
         )
 
-    def _section_from_candidate(self, spec: SectionSpec, candidate) -> ProcessedSectionResult:
+    def _section_from_candidate(
+        self,
+        spec: SectionSpec,
+        candidate,
+        section_image: np.ndarray | None = None,
+    ) -> ProcessedSectionResult:
         if candidate is None:
-            return self._empty_section(spec)
+            return self._empty_section(spec, section_image)
 
         x1, y1, _, _ = spec.box
         ocr_result = self._read_plate_candidate(candidate.image)
@@ -182,6 +188,7 @@ class ParkingLotProcessor:
                 detection_score=candidate.detection_score,
                 section_name=spec.display_name,
             ),
+            section_image=None if section_image is None else section_image.copy(),
             rectified_plate=candidate.image,
         )
 
@@ -191,7 +198,7 @@ class ParkingLotProcessor:
         candidate = self.detector.detect(section_image)
         if candidate is None:
             candidate = self._detect_fallback_candidate(frame, spec)
-        return self._section_from_candidate(spec, candidate)
+        return self._section_from_candidate(spec, candidate, section_image)
 
     def _detect_fallback_candidate(self, frame: np.ndarray, spec: SectionSpec) -> PlateCandidate | None:
         if self.fallback_detector is None:
@@ -240,11 +247,13 @@ class ParkingLotProcessor:
 
         processed_sections = []
         for spec in sections:
+            sx1, sy1, sx2, sy2 = spec.box
+            section_image = frame[sy1:sy2, sx1:sx2]
             if use_batch_detection:
                 candidate = yolo_candidates.get(spec.section_id)
                 if candidate is None:
                     candidate = self._detect_fallback_candidate(frame, spec)
-                processed_sections.append(self._section_from_candidate(spec, candidate))
+                processed_sections.append(self._section_from_candidate(spec, candidate, section_image))
                 continue
             processed_sections.append(self.process_section(frame, spec))
         results = [item.result for item in processed_sections]

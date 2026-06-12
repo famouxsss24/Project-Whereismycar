@@ -160,6 +160,22 @@ class CustomSectionSpecTests(unittest.TestCase):
         self.assertEqual(analysis.payload["section_count"], 1)
         self.assertEqual(len(analysis.sections), 1)
 
+    def test_processed_sections_keep_raw_scan_crop(self):
+        class Detector:
+            name = "yolo"
+
+            def detect(self, _section_image):
+                return None
+
+        processor = self._make_custom_processor([(10, 5, 60, 45)])
+        processor.detector = Detector()
+        processor.fallback_detector = None
+
+        analysis = processor.process_frame(np.zeros((80, 140, 3), dtype=np.uint8), "test", "custom")
+
+        self.assertIsNotNone(analysis.sections[0].section_image)
+        self.assertEqual(analysis.sections[0].section_image.shape, (40, 50, 3))
+
 
 class SettingsLoadingTests(unittest.TestCase):
     def test_load_settings_defaults_reads_all_supported_shapes(self):
@@ -325,7 +341,7 @@ class PlatePublishingTests(unittest.TestCase):
             detection_score=0.9,
         )
         image = np.zeros((30, 120, 3), dtype=np.uint8)
-        return ProcessedSectionResult(result=result, rectified_plate=image)
+        return ProcessedSectionResult(result=result, section_image=image, rectified_plate=image)
 
     def test_collect_updates_preserves_scanning_section_name(self):
         dispatcher = PlateUpdateDispatcher(server_url=None, timeout=10.0)
@@ -336,11 +352,12 @@ class PlatePublishingTests(unittest.TestCase):
         self.assertEqual(updates[0].zone, "b")
         self.assertEqual(updates[0].section_name, "b")
 
-    def test_firebase_payload_includes_scanning_section_name(self):
+    def test_firebase_payload_adds_entry_time_once(self):
         publisher = FirebasePlatePublisher.__new__(FirebasePlatePublisher)
         publisher._root_path = "parking_lot"
         publisher._app = object()
         fake_reference = mock.Mock()
+        fake_reference.get.return_value = {}
         fake_db = mock.Mock()
         fake_db.reference.return_value = fake_reference
         update = PlateUpdate(
@@ -351,16 +368,46 @@ class PlatePublishingTests(unittest.TestCase):
             image=None,
         )
 
-        with mock.patch("plate_publish.db", fake_db):
+        with (
+            mock.patch("plate_publish.db", fake_db),
+            mock.patch("plate_publish.format_kst_entry_time", return_value="2026-06-11 14:30:05"),
+        ):
             publisher.publish(update, "http://example.test/plate.jpg")
 
         fake_db.reference.assert_called_once_with("parking_lot/12\uac003456", app=publisher._app)
-        fake_reference.set.assert_called_once_with(
+        fake_reference.update.assert_called_once_with(
             {
                 "zone": "b",
-                "section_name": "b",
                 "last4": "3456",
                 "image_url": "http://example.test/plate.jpg",
+                "entry_time": "2026-06-11 14:30:05",
+            }
+        )
+
+    def test_firebase_payload_preserves_existing_entry_time(self):
+        publisher = FirebasePlatePublisher.__new__(FirebasePlatePublisher)
+        publisher._root_path = "parking_lot"
+        publisher._app = object()
+        fake_reference = mock.Mock()
+        fake_reference.get.return_value = {"entry_time": "2026-06-11 14:30:05"}
+        fake_db = mock.Mock()
+        fake_db.reference.return_value = fake_reference
+        update = PlateUpdate(
+            plate="12\uac003456",
+            zone="a",
+            section_name="a",
+            last4="3456",
+            image=None,
+        )
+
+        with mock.patch("plate_publish.db", fake_db):
+            publisher.publish(update, "http://example.test/new.jpg")
+
+        fake_reference.update.assert_called_once_with(
+            {
+                "zone": "a",
+                "last4": "3456",
+                "image_url": "http://example.test/new.jpg",
             }
         )
 

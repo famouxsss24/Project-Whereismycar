@@ -100,6 +100,7 @@ class SectionResult:
 @dataclass(frozen=True)
 class ProcessedSectionResult:
     result: SectionResult
+    section_image: np.ndarray | None
     rectified_plate: np.ndarray | None
 
 
