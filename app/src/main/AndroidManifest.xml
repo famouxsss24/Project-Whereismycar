@@ -21,10 +21,13 @@
             android:name=".MainActivity"
             android:screenOrientation="landscape"
             android:exported="true">
+            <!-- 런처 아이콘 등록 (앱 목록에 표시) -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Temi 웨이크업 -->
+            <intent-filter>
                 <action android:name="com.robotemi.sdk.action.WAKEUP" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>

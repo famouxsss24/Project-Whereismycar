@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FFF8F0">
+    android:background="#F4F3F1">
 
     <!-- ═══════════════ 1) 메인 화면 (검색) ═══════════════ -->
     <LinearLayout
@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="center_horizontal"
+        android:gravity="center"
         android:padding="48dp">
 
         <!-- 언어 선택 버튼 -->
@@ -27,8 +27,8 @@
                 android:layout_height="wrap_content"
                 android:text="🇰🇷 한국어"
                 android:textSize="16sp"
-                android:textColor="#3C3237"
-                android:backgroundTint="#FFE0D8"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#FF5A1F"
                 android:layout_marginEnd="8dp"/>
             <Button
                 android:id="@+id/btnLangEn"
@@ -36,7 +36,7 @@
                 android:layout_height="wrap_content"
                 android:text="🇺🇸 EN"
                 android:textSize="16sp"
-                android:textColor="#3C3237"
+                android:textColor="#1A1A1A"
                 android:backgroundTint="#FFFFFF"
                 android:layout_marginEnd="8dp"/>
             <Button
@@ -45,7 +45,7 @@
                 android:layout_height="wrap_content"
                 android:text="🇯🇵 日本語"
                 android:textSize="16sp"
-                android:textColor="#3C3237"
+                android:textColor="#1A1A1A"
                 android:backgroundTint="#FFFFFF"
                 android:layout_marginEnd="8dp"/>
             <Button
@@ -54,7 +54,7 @@
                 android:layout_height="wrap_content"
                 android:text="🇨🇳 中文"
                 android:textSize="16sp"
-                android:textColor="#3C3237"
+                android:textColor="#1A1A1A"
                 android:backgroundTint="#FFFFFF"/>
         </LinearLayout>
 
@@ -66,7 +66,7 @@
             android:text="🚗 내 차로"
             android:textSize="60sp"
             android:textStyle="bold"
-            android:textColor="#FF6B6B"
+            android:textColor="#FF5A1F"
             android:layout_marginBottom="8dp"/>
 
         <TextView
@@ -75,20 +75,21 @@
             android:layout_height="wrap_content"
             android:text="차량 번호판 뒷 4자리를 입력해 주세요"
             android:textSize="22sp"
-            android:textColor="#A89A95"
+            android:textColor="#8A8A8A"
             android:layout_marginBottom="36dp"/>
 
-        <!-- 뒷 4자리 입력 -->
-        <EditText
+        <!-- 뒷 4자리 입력 (DB 후보 자동완성) -->
+        <AutoCompleteTextView
             android:id="@+id/etPlateNumber"
             android:layout_width="380dp"
             android:layout_height="wrap_content"
             android:hint="0000"
             android:textSize="56sp"
-            android:textColor="#3C3237"
-            android:textColorHint="#D8CCC5"
+            android:textColor="#1A1A1A"
+            android:textColorHint="#C9C6C1"
             android:inputType="number"
             android:maxLength="4"
+            android:completionThreshold="1"
             android:gravity="center"
             android:padding="24dp"
             android:background="@drawable/bg_input"
@@ -102,7 +103,7 @@
             android:textSize="28sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#FF6B6B"
+            android:backgroundTint="#FF5A1F"
             android:layout_marginBottom="36dp"/>
 
         <!-- 상태 메시지 -->
@@ -112,7 +113,7 @@
             android:layout_height="wrap_content"
             android:text="Temi 연결 대기 중..."
             android:textSize="20sp"
-            android:textColor="#A89A95"
+            android:textColor="#8A8A8A"
             android:gravity="center"
             android:layout_marginBottom="20dp"/>
 
@@ -124,7 +125,7 @@
             android:text=""
             android:textSize="84sp"
             android:textStyle="bold"
-            android:textColor="#FF6B6B"
+            android:textColor="#FF5A1F"
             android:layout_marginBottom="16dp"/>
 
         <!-- 중복 결과: 번호판 이미지 선택 -->
@@ -135,7 +136,7 @@
             android:text="본인 차량을 선택해 주세요 🚙"
             android:textSize="32sp"
             android:textStyle="bold"
-            android:textColor="#3C3237"
+            android:textColor="#1A1A1A"
             android:visibility="gone"
             android:layout_marginTop="12dp"
             android:layout_marginBottom="28dp"/>
@@ -206,7 +207,7 @@
         android:orientation="vertical"
         android:gravity="center"
         android:padding="48dp"
-        android:background="#FFF8F0"
+        android:background="#F4F3F1"
         android:visibility="gone">
 
         <TextView
@@ -216,7 +217,7 @@
             android:text="🎯 광고 퀴즈"
             android:textSize="36sp"
             android:textStyle="bold"
-            android:textColor="#E89B2B"
+            android:textColor="#FF5A1F"
             android:layout_marginBottom="16dp"/>
 
         <TextView
@@ -225,8 +226,23 @@
             android:layout_height="wrap_content"
             android:text="정답 시 +100 포인트 🎁"
             android:textSize="20sp"
-            android:textColor="#A89A95"
-            android:layout_marginBottom="48dp"/>
+            android:textColor="#8A8A8A"
+            android:layout_marginBottom="24dp"/>
+
+        <!-- 주차 시간 할인 안내 -->
+        <TextView
+            android:id="@+id/tvDiscountInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="20sp"
+            android:textColor="#1A1A1A"
+            android:gravity="center"
+            android:lineSpacingExtra="6dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:background="@drawable/bg_banner"
+            android:layout_marginBottom="40dp"/>
 
         <TextView
             android:id="@+id/quizQuestion"
@@ -235,7 +251,7 @@
             android:text="류현진이 먹은 라면은?"
             android:textSize="40sp"
             android:textStyle="bold"
-            android:textColor="#3C3237"
+            android:textColor="#1A1A1A"
             android:gravity="center"
             android:layout_marginBottom="60dp"/>
 
@@ -246,8 +262,8 @@
             android:text="신라면"
             android:textSize="28sp"
             android:textStyle="bold"
-            android:textColor="#3C3237"
-            android:backgroundTint="#FFFFFF"
+            android:textColor="#1A1A1A"
+            android:backgroundTint="#DCE4DF"
             android:layout_marginBottom="24dp"/>
 
         <Button
@@ -257,8 +273,80 @@
             android:text="진라면"
             android:textSize="28sp"
             android:textStyle="bold"
-            android:textColor="#3C3237"
-            android:backgroundTint="#FFFFFF"/>
+            android:textColor="#1A1A1A"
+            android:backgroundTint="#DCE4DF"/>
+
+    </LinearLayout>
+
+    <!-- ═══════════════ 4-1) 포인트 적립/사용 선택 화면 ═══════════════ -->
+    <LinearLayout
+        android:id="@+id/pointLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="48dp"
+        android:background="#F4F3F1"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvPointTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🎁 포인트 적립 완료"
+            android:textSize="36sp"
+            android:textStyle="bold"
+            android:textColor="#FF5A1F"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/tvPointEarned"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="퀴즈 정답! +100P 적립"
+            android:textSize="22sp"
+            android:textColor="#8A8A8A"
+            android:layout_marginBottom="40dp"/>
+
+        <TextView
+            android:id="@+id/tvPointBalanceLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="보유 포인트"
+            android:textSize="24sp"
+            android:textColor="#1A1A1A"
+            android:layout_marginBottom="8dp"/>
+
+        <TextView
+            android:id="@+id/tvPointBalance"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0P"
+            android:textSize="64sp"
+            android:textStyle="bold"
+            android:textColor="#1A1A1A"
+            android:layout_marginBottom="48dp"/>
+
+        <Button
+            android:id="@+id/btnUsePoints"
+            android:layout_width="match_parent"
+            android:layout_height="88dp"
+            android:text="이번 결제에 사용"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#FF5A1F"
+            android:layout_marginBottom="24dp"/>
+
+        <Button
+            android:id="@+id/btnKeepPoints"
+            android:layout_width="match_parent"
+            android:layout_height="88dp"
+            android:text="다음에 쓰기 (적립 유지)"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#1A1A1A"
+            android:backgroundTint="#DCE4DF"/>
 
     </LinearLayout>
 
@@ -267,7 +355,7 @@
         android:id="@+id/navLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#FFF8F0"
+        android:background="#F4F3F1"
         android:visibility="gone">
 
         <LinearLayout
@@ -291,7 +379,7 @@
                 android:text=""
                 android:textSize="84sp"
                 android:textStyle="bold"
-                android:textColor="#FF6B6B"
+                android:textColor="#FF5A1F"
                 android:layout_marginBottom="20dp"/>
 
             <TextView
@@ -300,7 +388,7 @@
                 android:layout_height="wrap_content"
                 android:text="안내 중..."
                 android:textSize="26sp"
-                android:textColor="#3C3237"/>
+                android:textColor="#1A1A1A"/>
         </LinearLayout>
 
         <!-- 우측 상단: 작은 네비게이션 박스 -->
@@ -318,7 +406,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="📍 NAVIGATION"
-                android:textColor="#E89B2B"
+                android:textColor="#FF5A1F"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:layout_marginBottom="10dp"/>
@@ -328,7 +416,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="목적지: -\n상태: 대기 중\n방향: -"
-                android:textColor="#3C3237"
+                android:textColor="#1A1A1A"
                 android:textSize="15sp"
                 android:lineSpacingExtra="5dp"/>
         </LinearLayout>
