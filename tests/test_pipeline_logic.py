@@ -14,9 +14,10 @@ from parking_pipeline import (
     parse_camera_list_argument,
     parse_section_box_argument,
     resolve_configured_scan_areas,
+    resolve_section_name_offsets,
     save_camera_scan_areas,
 )
-from plate_detection import YoloPlateDetector, divide_into_sections
+from plate_detection import YoloPlateDetector, divide_into_sections, rectified_crop_preserves_plate_text, rectify_plate_crop
 from plate_ocr import PlateResult
 from plate_publish import FirebasePlatePublisher, PlateUpdate, PlateUpdateDispatcher
 
@@ -88,6 +89,30 @@ class YoloSectionCropTests(unittest.TestCase):
         candidate = detected["section-1"]
         self.assertEqual(candidate.box, (0, 0, 50, 40))
         self.assertEqual(candidate.image.shape[1], 50)
+
+
+class PlateRectificationTests(unittest.TestCase):
+    def test_rectified_crop_must_preserve_source_width(self):
+        source = np.zeros((40, 200, 3), dtype=np.uint8)
+        partial = np.zeros((30, 100, 3), dtype=np.uint8)
+        wide = np.zeros((30, 160, 3), dtype=np.uint8)
+
+        self.assertFalse(rectified_crop_preserves_plate_text(source, partial))
+        self.assertTrue(rectified_crop_preserves_plate_text(source, wide))
+
+    def test_rectify_plate_crop_rejects_partial_rotated_crop(self):
+        source = np.full((40, 200, 3), 255, dtype=np.uint8)
+        partial = np.full((30, 100, 3), 255, dtype=np.uint8)
+        source_normalized = np.full((35, 190, 3), 240, dtype=np.uint8)
+
+        with (
+            mock.patch("plate_detection.find_rotated_plate_crop", return_value=partial),
+            mock.patch("plate_detection.normalize_plate_orientation", return_value=source_normalized),
+            mock.patch("plate_detection.cv2.findNonZero", return_value=None),
+        ):
+            result = rectify_plate_crop(source)
+
+        self.assertIs(result, source_normalized)
 
 
 class DivideIntoSectionsTests(unittest.TestCase):
@@ -175,6 +200,20 @@ class CustomSectionSpecTests(unittest.TestCase):
 
         self.assertIsNotNone(analysis.sections[0].section_image)
         self.assertEqual(analysis.sections[0].section_image.shape, (40, 50, 3))
+
+    def test_default_section_names_can_be_offset(self):
+        processor = ParkingLotProcessor.__new__(ParkingLotProcessor)
+        processor._custom_section_boxes = None
+        processor._custom_section_names = None
+        processor._section_name_offset = 3
+        processor.section_count = 3
+        processor.layout = "columns"
+        processor._section_cache = {}
+        processor._section_lock = threading.RLock()
+
+        specs = processor.get_section_specs((80, 300, 3))
+
+        self.assertEqual([spec.display_name for spec in specs], ["d", "e", "f"])
 
 
 class SettingsLoadingTests(unittest.TestCase):
@@ -280,6 +319,45 @@ class SettingsLoadingTests(unittest.TestCase):
 
         self.assertEqual(resolved[0], [ScanArea("k", (10, 20, 110, 80))])
         self.assertEqual(resolved[1], [ScanArea("a", (1, 2, 4, 6))])
+
+    def test_resolve_configured_scan_areas_renames_duplicate_global_names(self):
+        namespace = mock.Mock()
+        namespace.webcam = True
+        namespace.section_box = ["1,2,3,4"]
+        namespace.scan_area = None
+        namespace.camera_scan_areas = {}
+
+        resolved = resolve_configured_scan_areas(namespace, [0, 1], cli_section_box_override=False)
+
+        self.assertEqual(resolved[0], [ScanArea("a", (1, 2, 4, 6))])
+        self.assertEqual(resolved[1], [ScanArea("b", (1, 2, 4, 6))])
+
+    def test_resolve_configured_scan_areas_renames_duplicate_camera_names(self):
+        namespace = mock.Mock()
+        namespace.webcam = True
+        namespace.section_box = None
+        namespace.scan_area = None
+        namespace.camera_scan_areas = {
+            0: [ScanArea("b", (10, 20, 110, 80)), ScanArea("a", (120, 20, 220, 80))],
+            2: [ScanArea("c", (10, 90, 110, 150)), ScanArea("b", (120, 90, 220, 150))],
+        }
+
+        resolved = resolve_configured_scan_areas(namespace, [0, 2], cli_section_box_override=False)
+
+        self.assertEqual([area.name for area in resolved[0]], ["b", "a"])
+        self.assertEqual([area.name for area in resolved[2]], ["c", "d"])
+
+    def test_resolve_section_name_offsets_skip_configured_names(self):
+        namespace = mock.Mock()
+        namespace.sections = 3
+        configured = {
+            0: [ScanArea("a", (10, 20, 110, 80))],
+            1: None,
+        }
+
+        offsets = resolve_section_name_offsets(namespace, configured, [0, 1])
+
+        self.assertEqual(offsets[1], 3)
 
     def test_resolve_configured_scan_areas_ignores_camera_areas_for_images(self):
         namespace = mock.Mock()

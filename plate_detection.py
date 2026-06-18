@@ -15,6 +15,7 @@ DEFAULT_YOLO_MODEL_CANDIDATES = (
     Path("models/license-plate-finetune-v1s.pt"),
     Path("models/license-plate-finetune-v1n.pt"),
 )
+MIN_RECTIFIED_WIDTH_RATIO = 0.72
 
 
 def divide_into_sections(image_shape: tuple[int, int, int], count: int, layout: str) -> list[SectionSpec]:
@@ -110,6 +111,16 @@ def normalize_plate_orientation(image: np.ndarray) -> np.ndarray:
     return normalized
 
 
+def rectified_crop_preserves_plate_text(source: np.ndarray, rectified: np.ndarray) -> bool:
+    _, source_width = source.shape[:2]
+    _, rectified_width = rectified.shape[:2]
+    if source_width <= 0 or rectified_width <= 0:
+        return False
+
+    width_ratio = rectified_width / float(source_width)
+    return width_ratio >= MIN_RECTIFIED_WIDTH_RATIO
+
+
 def find_rotated_plate_crop(image: np.ndarray) -> np.ndarray | None:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 7, 50, 50)
@@ -162,15 +173,16 @@ def find_rotated_plate_crop(image: np.ndarray) -> np.ndarray | None:
 
 def rectify_plate_crop(image: np.ndarray) -> np.ndarray:
     rotated_crop = find_rotated_plate_crop(image)
-    if rotated_crop is not None:
+    if rotated_crop is not None and rectified_crop_preserves_plate_text(image, rotated_crop):
         return rotated_crop
 
+    source_normalized = normalize_plate_orientation(image)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 7, 50, 50)
     edges = cv2.Canny(gray, 60, 180)
     points = cv2.findNonZero(edges)
     if points is None:
-        return normalize_plate_orientation(image)
+        return source_normalized
 
     rect = cv2.minAreaRect(points)
     angle = rect[2]
@@ -178,7 +190,10 @@ def rectify_plate_crop(image: np.ndarray) -> np.ndarray:
     if width < height:
         angle += 90
     rotated = rotate_image(image, angle)
-    return normalize_plate_orientation(rotated)
+    fallback = normalize_plate_orientation(rotated)
+    if rectified_crop_preserves_plate_text(image, fallback):
+        return fallback
+    return source_normalized
 
 
 def expand_box(box: tuple[int, int, int, int], image_shape: tuple[int, int, int], margin_ratio: float = 0.08) -> tuple[int, int, int, int]:

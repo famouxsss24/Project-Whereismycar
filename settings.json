@@ -2,11 +2,11 @@
   "image_path": null,
   "webcam": true,
   "cameras": [
-    1,
+    0,
     2
   ],
   "camera_resolutions": {
-    "1": {
+    "0": {
       "width": 3840,
       "height": 2160
     },
@@ -60,7 +60,7 @@
   "azure_blob_sas_ttl_minutes": 60,
   "azure_secrets_path": "secrets/azure-blob.json",
   "timeout": 10.0,
-  "interval": 1.0,
+  "interval": 2.0,
   "plate_cooldown": 30.0,
   "loop": false,
   "preview": true,
@@ -68,21 +68,35 @@
   "camera_section_boxes": {
     "0": [
       {
-        "name": "a",
-        "x": 206,
-        "y": 252,
-        "width": 267,
-        "height": 203
+        "name": "c",
+        "x": 1768,
+        "y": 834,
+        "width": 1174,
+        "height": 742
+      },
+      {
+        "name": "d",
+        "x": 429,
+        "y": 858,
+        "width": 1174,
+        "height": 770
       }
     ],
     "1": [],
     "2": [
       {
-        "name": "d",
-        "x": 653,
-        "y": 805,
-        "width": 600,
-        "height": 275
+        "name": "a",
+        "x": 405,
+        "y": 822,
+        "width": 1395,
+        "height": 806
+      },
+      {
+        "name": "b",
+        "x": 1872,
+        "y": 850,
+        "width": 1279,
+        "height": 798
       }
     ]
   }

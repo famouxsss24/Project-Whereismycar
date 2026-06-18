@@ -29,7 +29,9 @@ class ParkingLotProcessor:
         yolo_confidence: float = 0.25,
         yolo_image_size: int = 640,
         allow_yolo_fallback: bool = True,
+        section_name_offset: int = 0,
     ) -> None:
+        self._section_name_offset = section_name_offset
         self._custom_section_boxes = None if section_boxes is None else tuple(section_boxes)
         self._custom_section_names = (
             None
@@ -53,6 +55,7 @@ class ParkingLotProcessor:
                 str,
                 tuple[tuple[int, int, int, int], ...] | None,
                 tuple[str, ...] | None,
+                int,
             ],
             list[SectionSpec],
         ] = {}
@@ -109,12 +112,28 @@ class ParkingLotProcessor:
     def get_section_specs(self, image_shape: tuple[int, ...]) -> list[SectionSpec]:
         with self._section_lock:
             custom_section_names = getattr(self, "_custom_section_names", None)
-            cache_key = (image_shape, self.section_count, self.layout, self._custom_section_boxes, custom_section_names)
+            section_name_offset = getattr(self, "_section_name_offset", 0)
+            cache_key = (
+                image_shape,
+                self.section_count,
+                self.layout,
+                self._custom_section_boxes,
+                custom_section_names,
+                section_name_offset,
+            )
             if cache_key not in self._section_cache:
                 if self._custom_section_boxes is not None:
                     self._section_cache[cache_key] = self._build_custom_section_specs(image_shape)
                 else:
-                    self._section_cache[cache_key] = divide_into_sections(image_shape, self.section_count, self.layout)
+                    self._section_cache[cache_key] = [
+                        SectionSpec(
+                            spec.section_id,
+                            spec.index,
+                            spec.box,
+                            section_name_from_index(section_name_offset + spec.index),
+                        )
+                        for spec in divide_into_sections(image_shape, self.section_count, self.layout)
+                    ]
             return self._section_cache[cache_key]
 
     def _read_plate_candidate(self, candidate_image: np.ndarray):

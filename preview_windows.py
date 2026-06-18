@@ -49,6 +49,16 @@ class ScanAreaSelector:
     def scan_areas(self) -> list[ScanArea]:
         return list(self._areas)
 
+    def replace_scan_areas(self, areas: list[ScanArea]) -> None:
+        self._areas = list(areas)
+        if not self._areas:
+            self._selected_index = None
+            return
+        if self._selected_index is None:
+            self._selected_index = 0
+            return
+        self._selected_index = min(self._selected_index, len(self._areas) - 1)
+
     @property
     def selected_name(self) -> str | None:
         if self._selected_index is None:
@@ -247,7 +257,7 @@ def preview_lines_from_payload(
             lines.append((text, 24, color))
 
     lines.append((f"Last OCR: {format_elapsed(last_completed_at)}", 20, (220, 220, 220)))
-    lines.append(("Drag boxes. Tab select, a-z rename, c clear, r reset, q quit.", 20, (220, 220, 220)))
+    lines.append(("Drag boxes. Tab select, a-z rename, x clear, r reset, q quit.", 20, (220, 220, 220)))
     if latest_error:
         lines.append((f"Error: {latest_error}", 20, (255, 140, 140)))
     return lines

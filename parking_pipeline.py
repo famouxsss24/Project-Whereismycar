@@ -149,6 +149,46 @@ def scan_areas_from_boxes(boxes: list[Box]) -> list[ScanArea]:
     return [ScanArea(section_name_from_index(index), box) for index, box in enumerate(boxes)]
 
 
+def next_unused_section_name(used_names: set[str], reserved_names: set[str] | None = None) -> str:
+    reserved = reserved_names or set()
+    index = 0
+    while True:
+        name = section_name_from_index(index)
+        if name not in used_names and name not in reserved:
+            return name
+        index += 1
+
+
+def ensure_unique_scan_area_names(scan_areas: list[ScanArea], used_names: set[str]) -> list[ScanArea]:
+    reserved_names = {area.name for area in scan_areas if area.name not in used_names}
+    unique_areas: list[ScanArea] = []
+    for area in scan_areas:
+        if area.name in used_names:
+            name = next_unused_section_name(used_names, reserved_names)
+        else:
+            name = area.name
+        used_names.add(name)
+        reserved_names.discard(name)
+        unique_areas.append(ScanArea(name, area.box))
+    return unique_areas
+
+
+def ensure_unique_scan_areas_by_camera(
+    scan_areas_by_camera: dict[int, list[ScanArea] | None],
+    camera_indexes: list[int],
+) -> dict[int, list[ScanArea] | None]:
+    used_names: set[str] = set()
+    unique_by_camera: dict[int, list[ScanArea] | None] = {}
+    for camera_index in camera_indexes:
+        scan_areas = scan_areas_by_camera.get(camera_index)
+        unique_by_camera[camera_index] = (
+            ensure_unique_scan_area_names(list(scan_areas), used_names)
+            if scan_areas is not None
+            else None
+        )
+    return unique_by_camera
+
+
 def parse_camera_list_argument(value: str) -> list[int]:
     indexes: list[int] = []
     for part in value.split(","):
@@ -681,6 +721,7 @@ def build_processor(
     args: argparse.Namespace,
     scan_areas: list[ScanArea] | None,
     resolved_yolo_model: str | None,
+    section_name_offset: int = 0,
 ) -> ParkingLotProcessor:
     processor = ParkingLotProcessor(
         section_count=args.sections,
@@ -691,6 +732,7 @@ def build_processor(
         yolo_confidence=args.yolo_conf,
         yolo_image_size=args.yolo_imgsz,
         allow_yolo_fallback=not args.yolo_only,
+        section_name_offset=section_name_offset,
     )
     if scan_areas is not None:
         processor.set_scan_areas(scan_areas)
@@ -703,8 +745,14 @@ def build_processors(
     resolved_yolo_model: str | None,
     camera_indexes: list[int],
 ) -> dict[int, ParkingLotProcessor]:
+    section_name_offsets = resolve_section_name_offsets(args, scan_areas_by_camera, camera_indexes)
     return {
-        camera_index: build_processor(args, scan_areas_by_camera.get(camera_index), resolved_yolo_model)
+        camera_index: build_processor(
+            args,
+            scan_areas_by_camera.get(camera_index),
+            resolved_yolo_model,
+            section_name_offsets.get(camera_index, 0),
+        )
         for camera_index in camera_indexes
     }
 
@@ -741,10 +789,36 @@ def resolve_configured_scan_areas(
     configured: dict[int, list[ScanArea] | None] = {}
     for camera_index in camera_indexes:
         if args.webcam and not cli_section_box_override and camera_index in camera_scan_areas:
-            configured[camera_index] = camera_scan_areas[camera_index]
+            configured[camera_index] = list(camera_scan_areas[camera_index])
             continue
-        configured[camera_index] = global_scan_areas if global_scan_areas else None
-    return configured
+        configured[camera_index] = list(global_scan_areas) if global_scan_areas else None
+    return ensure_unique_scan_areas_by_camera(configured, camera_indexes)
+
+
+def resolve_section_name_offsets(
+    args: argparse.Namespace,
+    scan_areas_by_camera: dict[int, list[ScanArea] | None],
+    camera_indexes: list[int],
+) -> dict[int, int]:
+    used_names = {
+        area.name
+        for camera_index in camera_indexes
+        for area in (scan_areas_by_camera.get(camera_index) or [])
+    }
+    offsets: dict[int, int] = {}
+    section_count = max(0, int(args.sections))
+    for camera_index in camera_indexes:
+        if scan_areas_by_camera.get(camera_index) is not None:
+            continue
+        offset = 0
+        while True:
+            names = {section_name_from_index(offset + index) for index in range(section_count)}
+            if not names & used_names:
+                break
+            offset += section_count or 1
+        offsets[camera_index] = offset
+        used_names.update(section_name_from_index(offset + index) for index in range(section_count))
+    return offsets
 
 
 def save_camera_scan_areas(settings_path: Path, camera_index: int, scan_areas: list[ScanArea]) -> None:
@@ -764,6 +838,26 @@ def save_camera_scan_areas(settings_path: Path, camera_index: int, scan_areas: l
     with settings_path.open("w", encoding="utf-8") as settings_file:
         json.dump(settings, settings_file, ensure_ascii=False, indent=2)
         settings_file.write("\n")
+
+
+def sync_unique_preview_scan_areas(
+    states: dict[int, PreviewCameraState],
+    camera_indexes: list[int],
+    settings_path: Path,
+) -> None:
+    current = {
+        camera_index: states[camera_index].selector.scan_areas
+        for camera_index in camera_indexes
+        if states[camera_index].selector_initialized
+    }
+    unique = ensure_unique_scan_areas_by_camera(current, list(current))
+    for camera_index, scan_areas in unique.items():
+        if scan_areas is None:
+            continue
+        state = states[camera_index]
+        state.selector.replace_scan_areas(scan_areas)
+        state.processor.set_scan_areas(scan_areas)
+        save_camera_scan_areas(settings_path, camera_index, scan_areas)
 
 
 def run_once(
@@ -833,11 +927,12 @@ def initial_scan_areas(
     args: argparse.Namespace,
     configured_scan_areas: list[ScanArea] | None,
     frame_shape: tuple[int, ...],
+    section_name_offset: int = 0,
 ) -> list[ScanArea]:
     if configured_scan_areas is not None:
         return list(configured_scan_areas)
     return [
-        ScanArea(spec.display_name, spec.box)
+        ScanArea(section_name_from_index(section_name_offset + spec.index), spec.box)
         for spec in divide_into_sections(frame_shape, args.sections, args.layout)
     ]
 
@@ -853,6 +948,7 @@ def run_preview_loop(
     captures = open_cameras(args, camera_indexes)
     multi_camera = len(camera_indexes) > 1
     states: dict[int, PreviewCameraState] = {}
+    section_name_offsets = resolve_section_name_offsets(args, configured_scan_areas_by_camera, camera_indexes)
 
     for camera_index in camera_indexes:
         selector = ScanAreaSelector()
@@ -885,13 +981,13 @@ def run_preview_loop(
                                 args,
                                 configured_scan_areas_by_camera.get(camera_index),
                                 frame.shape,
+                                section_name_offsets.get(camera_index, 0),
                             )
                         )
                         state.selector_initialized = True
 
                     if state.selector.consume_changed():
-                        state.processor.set_scan_areas(state.selector.scan_areas)
-                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                        sync_unique_preview_scan_areas(states, camera_indexes, settings_path)
 
                     if state.pending is not None and state.pending.done():
                         try:
@@ -936,25 +1032,24 @@ def run_preview_loop(
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     return 0
-                elif key == ord("c"):
-                    for camera_index, state in states.items():
+                elif key == ord("x"):
+                    for state in states.values():
                         state.selector.clear()
-                        state.processor.set_scan_areas(state.selector.scan_areas)
-                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                    sync_unique_preview_scan_areas(states, camera_indexes, settings_path)
                 elif key == ord("r"):
-                    for camera_index, state in states.items():
+                    for state in states.values():
                         state.selector.reset()
-                        state.processor.set_scan_areas(state.selector.scan_areas)
-                        save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                    sync_unique_preview_scan_areas(states, camera_indexes, settings_path)
                 elif key == 9:
                     for state in states.values():
                         state.selector.select_next()
                 elif ord("a") <= key <= ord("z"):
                     name = chr(key)
-                    for camera_index, state in states.items():
-                        if state.selector.rename_selected(name):
-                            state.processor.set_scan_areas(state.selector.scan_areas)
-                            save_camera_scan_areas(settings_path, camera_index, state.selector.scan_areas)
+                    renamed = False
+                    for state in states.values():
+                        renamed = state.selector.rename_selected(name) or renamed
+                    if renamed:
+                        sync_unique_preview_scan_areas(states, camera_indexes, settings_path)
         finally:
             for capture in captures.values():
                 capture.release()
