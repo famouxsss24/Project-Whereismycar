@@ -1,7 +1,11 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.Wimc" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <!-- 다크모드에서도 동일한 라이트 템플릿 룩 유지 -->
+        <item name="colorPrimary">#FF5A1F</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="android:windowBackground">#F4F3F1</item>
+        <item name="android:statusBarColor">#F4F3F1</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
